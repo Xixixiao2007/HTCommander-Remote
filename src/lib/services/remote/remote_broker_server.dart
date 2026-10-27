@@ -35,8 +35,11 @@ Design notes:
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../data_broker.dart';
+import 'remote_audio.dart';
+import 'remote_audio_resample.dart';
 import 'remote_token_store.dart';
 
 /// Serves the DataBroker protocol to remote HTCommander clients over WebSocket.
@@ -56,6 +59,7 @@ class RemoteBrokerServer {
     InternetAddress? bindAddress,
     this.tokenStore,
     this.requireAuth = false,
+    this.audioOutputRate,
   }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
@@ -70,6 +74,15 @@ class RemoteBrokerServer {
   /// Whether a valid token is required to attach. See the constructor note.
   final bool requireAuth;
 
+  /// Wire sample rate for audio (decision D6). Null ships the source rate
+  /// unchanged; 16000 or 8000 filter and decimate down to that tier.
+  final int? audioOutputRate;
+
+  /// One decimator per source rate, so filter state survives across blocks
+  /// instead of resetting (and clicking) on every audio callback.
+  final Map<int, RemoteAudioDecimator> _decimators =
+      <int, RemoteAudioDecimator>{};
+
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
   int _nextPeerId = 1;
@@ -79,6 +92,48 @@ class RemoteBrokerServer {
 
   /// Number of currently attached remote peers.
   int get clientCount => _peers.length;
+
+  /// Encodes [pcm] and fans it out to every attached peer as one binary frame.
+  ///
+  /// Returns how many peers it reached. Audio is fire-and-forget: a peer that
+  /// falls behind drops frames rather than stalling the radio pipeline, and a
+  /// dead socket is simply skipped (its close handler detaches it).
+  ///
+  /// [sampleRate] is the rate of [pcm] as produced by the host; when
+  /// [audioOutputRate] names a lower tier the audio is filtered and decimated
+  /// first, so the tier is a constructor decision rather than per-call.
+  int broadcastAudio(
+    Int16List pcm, {
+    required int sampleRate,
+    int channels = 1,
+  }) {
+    if (_peers.isEmpty) return 0;
+
+    var samples = pcm;
+    var rate = sampleRate;
+    final tier = audioOutputRate;
+    if (tier != null && tier > 0 && tier < sampleRate) {
+      final decimator = _decimators.putIfAbsent(
+        sampleRate,
+        () => RemoteAudioDecimator(inputRate: sampleRate, outputRate: tier),
+      );
+      samples = decimator.process(pcm);
+      rate = tier;
+    }
+    if (samples.isEmpty) return 0;
+
+    final frame = RemoteAudio.encode(samples, rate, channels);
+    var sent = 0;
+    for (final socket in _peers.values.toList()) {
+      try {
+        socket.add(frame);
+        sent++;
+      } catch (_) {
+        // Peer vanished mid-send; its close handler detaches it.
+      }
+    }
+    return sent;
+  }
 
   /// Whether the server is listening.
   bool get isRunning => _server != null;

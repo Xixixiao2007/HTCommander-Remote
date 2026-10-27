@@ -18,10 +18,12 @@ client socket, and this class is covered against a fake host.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../data_broker.dart';
+import 'remote_audio.dart';
 import 'remote_broker_server.dart' show RemoteBrokerServer;
 
 /// Attaches this broker to a remote host as its secondary client.
@@ -40,6 +42,17 @@ class RemoteBrokerClient {
 
   /// Whether a socket is currently attached.
   bool get isConnected => _socket != null;
+
+  /// Decoded audio frames pushed by the host (T4b).
+  ///
+  /// Broadcast so several consumers (playback, metering, recording) can listen
+  /// independently. Frames are dropped for a consumer that cannot keep up,
+  /// matching the host's fire-and-forget audio: a stalled listener must never
+  /// back-pressure the radio pipeline.
+  Stream<RemoteAudioFrame> get audioFrames => _audioController.stream;
+
+  final StreamController<RemoteAudioFrame> _audioController =
+      StreamController<RemoteAudioFrame>.broadcast();
 
   /// Connects to the host and adopts the client role.
   ///
@@ -101,6 +114,9 @@ class RemoteBrokerClient {
     } catch (_) {
       // Already cancelled.
     }
+    if (!_audioController.isClosed) {
+      await _audioController.close();
+    }
   }
 
   void _onTransportClosed() {
@@ -119,6 +135,16 @@ class RemoteBrokerClient {
   }
 
   void _onMessage(dynamic data) {
+    // Binary frames are audio; everything else is the JSON broker protocol.
+    if (data is List<int>) {
+      final frame = RemoteAudio.decode(
+        data is Uint8List ? data : Uint8List.fromList(data),
+      );
+      if (frame != null && !_audioController.isClosed) {
+        _audioController.add(frame);
+      }
+      return;
+    }
     if (data is! String) return;
     Object? decoded;
     try {

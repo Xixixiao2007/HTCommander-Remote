@@ -15,12 +15,14 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/remote/remote_broker_client.dart';
+import 'package:htcommander/services/remote/remote_audio.dart';
 
 /// Stands in for a host: accepts one WebSocket, records what the client sends,
 /// and can push frames back.
@@ -68,6 +70,15 @@ class _FakeHost {
   void push(Map<String, Object?> message) {
     try {
       _socket?.add(jsonEncode(message));
+    } catch (_) {
+      // Client gone.
+    }
+  }
+
+  /// Pushes a raw binary frame (audio) to the client.
+  void pushBytes(List<int> bytes) {
+    try {
+      _socket?.add(bytes);
     } catch (_) {
       // Client gone.
     }
@@ -207,5 +218,22 @@ void main() {
     final dead = RemoteBrokerClient(uri: Uri.parse('ws://127.0.0.1:1/remote'));
     expect(await dead.connect(), isFalse);
     expect(dead.isConnected, isFalse);
+  });
+
+  test('AC-T4b.6 host-pushed binary frames surface as decoded audio', () async {
+    expect(await client.connect(), isTrue);
+    expect(await _waitFor(() => host.isUpgraded), isTrue,
+        reason: 'host never upgraded the socket');
+
+    final frames = <RemoteAudioFrame>[];
+    client.audioFrames.listen(frames.add);
+
+    final samples = Int16List.fromList(<int>[1, -2, 3, -4]);
+    host.pushBytes(RemoteAudio.encode(samples, 8000, 1));
+
+    expect(await _waitFor(() => frames.isNotEmpty), isTrue,
+        reason: 'binary audio frame did not reach audioFrames');
+    expect(frames.first.sampleRate, 8000);
+    expect(frames.first.pcm, samples);
   });
 }
