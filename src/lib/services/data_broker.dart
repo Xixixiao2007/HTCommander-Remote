@@ -379,6 +379,14 @@ class DataBroker {
         break;
     }
 
+    // Remote peers (native clients on another machine, attached over the
+    // /remote WebSocket endpoint). Fanned out after the local apply so a peer
+    // never receives a value this broker has not yet accepted. A client-role
+    // broker does not fan out: the authoritative state lives on its host.
+    if (broker._role != DataBrokerRole.client) {
+      _forwardToRemotePeers(deviceId, name, data, store);
+    }
+
     // Hosted web client: proxy device-0 settings to the desktop host instead of
     // keeping them local. Host-originated changes are applied via
     // [applyHostDevice0] (which bypasses [dispatch]), so this never loops.
@@ -918,6 +926,87 @@ class DataBroker {
       }
     }
     return value;
+  }
+
+  // ========== Remote peer transport (native client over WebSocket) ==========
+  //
+  // A native client on another machine mirrors this broker by speaking the same
+  // messages the detached-window MethodChannel transport uses. The WebSocket
+  // server that carries them lives in services/remote/ and needs only this
+  // registry plus the entry points below, so DataBroker stays the single seam
+  // between components (see dsh/files/远程控制-决策与规格.md, D7).
+
+  /// Attached remote peers, keyed by peer id, each with a send callback.
+  static final Map<String, void Function(Map<String, Object?> message)>
+      _remotePeers = <String, void Function(Map<String, Object?> message)>{};
+
+  /// Number of currently attached remote peers.
+  static int get remotePeerCount => _remotePeers.length;
+
+  /// Attaches a remote peer. [send] is invoked with every broker change meant
+  /// for that peer; it must not throw (exceptions are swallowed on our side).
+  static void attachRemotePeer(
+    String peerId,
+    void Function(Map<String, Object?> message) send,
+  ) {
+    _remotePeers[peerId] = send;
+  }
+
+  /// Detaches a remote peer. Safe to call for an unknown id.
+  static void detachRemotePeer(String peerId) {
+    _remotePeers.remove(peerId);
+  }
+
+  /// Applies a dispatch that arrived from a remote peer: stores/notifies
+  /// locally, mirrors to detached windows, then fans out to the OTHER remote
+  /// peers (excluding the originator, which already applied it optimistically).
+  static void applyRemoteDispatch({
+    required String from,
+    required int deviceId,
+    required String name,
+    required String? payload,
+    bool store = true,
+  }) {
+    final broker = _instance;
+    final data = broker._decode(payload);
+    broker._applyLocal(deviceId, name, data, store);
+    broker._forwardToChildren(deviceId, name, data, store);
+    _forwardToRemotePeers(deviceId, name, data, store, exclude: from);
+  }
+
+  /// Host only: a full snapshot of the data store for a newly attached remote
+  /// peer, in the same `{deviceId, name, payload}` shape a detached window gets.
+  static List<Map<String, Object?>> buildRemoteSnapshot() =>
+      _instance._buildSnapshot();
+
+  /// Fans a change out to every attached remote peer, optionally skipping the
+  /// one that originated it. Unencodable values are skipped, matching
+  /// [_forwardToChildren].
+  static void _forwardToRemotePeers(
+    int deviceId,
+    String name,
+    Object? data,
+    bool store, {
+    String? exclude,
+  }) {
+    if (_remotePeers.isEmpty) return;
+    final payload = _instance._encode(data);
+    if (payload == null && data != null) return; // unencodable, skip
+    final message = <String, Object?>{
+      'm': 'onData',
+      'deviceId': deviceId,
+      'name': name,
+      'payload': payload,
+      'store': store,
+    };
+    for (final entry in _remotePeers.entries.toList()) {
+      if (entry.key == exclude) continue;
+      try {
+        entry.value(message);
+      } catch (_) {
+        // Peer socket died between the count check and this send.
+      }
+    }
   }
 
   // ========== Cross-window transport (host + client) ==========
