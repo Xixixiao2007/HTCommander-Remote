@@ -84,6 +84,7 @@ import 'services/db/app_database.dart';
 import 'services/remote/remote_audit.dart';
 import 'services/remote/remote_audio_sink.dart';
 import 'services/remote/remote_control_service.dart';
+import 'services/remote/remote_ptt_state.dart';
 import 'services/remote/remote_role.dart';
 import 'services/settings_migration.dart';
 import 'services/data_broker_client.dart';
@@ -304,6 +305,11 @@ class _ReadableErrorWidget extends StatelessWidget {
 /// service must outlive the startup sequence. Null in standalone mode, which
 /// is the historical behaviour.
 RemoteControlService? _remoteControl;
+
+/// Press-to-talk state for the remote client role (decision B: the control
+/// lives in the 通信 tab, next to the local PTT). Null unless this install is
+/// acting as a client of a host.
+RemotePttState? _remotePtt;
 
 Future<void> _startApp(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -679,6 +685,11 @@ Future<void> _startApp(List<String> args) async {
         debugPrint('RemoteControl: ${_remoteControl!.errors.join(' ')}');
       } else {
         debugPrint('RemoteControl: running as ${roleConfig.role.name}');
+        // Only a client needs a transmit control: a host transmits through its
+        // own radio path, and a standalone install has no remote session.
+        if (roleConfig.role == RemoteAppRole.client) {
+          _remotePtt = RemotePttState(service: _remoteControl!);
+        }
       }
     }
   }
@@ -861,7 +872,7 @@ class _SubWindowAppState extends State<SubWindowApp> with WindowListener {
     switch (windowType) {
       case 'comms':
         tabTitle = 'Communications';
-        tabContent = const CommsTab();
+        tabContent = CommsTab(remotePtt: _remotePtt);
       case 'audio':
         tabTitle = 'Audio';
         tabContent = const AudioTab();
@@ -4638,7 +4649,7 @@ class _MainFormState extends State<MainForm>
           onConnectPressed: _onRadioConnect,
         );
       case 'Comms':
-        return const CommsTab();
+        return CommsTab(remotePtt: _remotePtt);
       case 'Audio':
         return const AudioTab();
       case 'APRS':

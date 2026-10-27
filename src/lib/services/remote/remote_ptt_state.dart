@@ -20,12 +20,18 @@ the refusal is exposed for display instead of being swallowed.
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../data_broker.dart';
 import '../data_broker_client.dart';
 import 'remote_control_service.dart';
 
 /// Holds the state a press-to-talk control renders, and drives the service.
-class RemotePttState {
+///
+/// A [ChangeNotifier] because a plain object would let a widget render once and
+/// then stay stale: authority changes, refusals and "who is transmitting" all
+/// arrive from the host asynchronously.
+class RemotePttState extends ChangeNotifier {
   RemotePttState({required this.service}) {
     _broker = DataBrokerClient();
     // Seed from whatever the service already published, so a control created
@@ -88,20 +94,21 @@ class RemotePttState {
     if (_disposed) return;
     if (service.isOperator) {
       _pendingPress = false;
-      unawaited(service.setTransmitHeld(true));
+      unawaited(service.setTransmitHeld(true).then((_) => _notify()));
       return;
     }
     // Ask for the transmitter. The press stays pending: once the host grants
     // it, the operator is already holding the button and expects to be heard.
     _pendingPress = true;
     service.acquireOperator();
+    _notify();
   }
 
   /// The trigger came up, was cancelled, or the control is going away.
   void release() {
     if (_disposed) return;
     _pendingPress = false;
-    unawaited(service.setTransmitHeld(false));
+    unawaited(service.setTransmitHeld(false).then((_) => _notify()));
     // Hand authority back so the next operator is not locked out by a button
     // nobody is holding.
     service.releaseOperator();
@@ -114,22 +121,33 @@ class RemotePttState {
       _pendingPress = false;
       unawaited(service.setTransmitHeld(true));
     }
+    _notify();
   }
 
   void _onHolderChanged(int deviceId, String name, Object? data) {
     _holder = data is String ? data : null;
+    _notify();
   }
 
   void _onRefusalChanged(int deviceId, String name, Object? data) {
     _refusal = data is String ? data : null;
+    _notify();
+  }
+
+  /// Notifies unless this state is already gone.
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
   }
 
   /// Detaches from the broker and makes sure nothing is left keyed.
+  @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
     DataBroker.unsubscribe(_broker);
     _pendingPress = false;
     unawaited(service.setTransmitHeld(false));
+    super.dispose();
   }
 }

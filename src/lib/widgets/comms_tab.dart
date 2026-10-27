@@ -7,6 +7,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+import '../services/remote/remote_ptt_state.dart';
+import 'remote_ptt_panel.dart';
 import 'tab_visibility.dart';
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -53,7 +56,15 @@ enum VoiceTransmitMode { chat, speak, morse, dtmf, ptt, morseKey, none }
 
 /// Voice tab - audio communication controls
 class CommsTab extends StatefulWidget {
-  const CommsTab({super.key});
+  const CommsTab({super.key, this.remotePtt});
+
+  /// Remote press-to-talk state, or null on a host/standalone install.
+  ///
+  /// Decision B puts the remote control in this tab, next to the local PTT.
+  /// The tab receives it rather than reaching for a global, so the control can
+  /// be tested with a stand-in and a build without remote control looks exactly
+  /// like upstream.
+  final RemotePttState? remotePtt;
 
   @override
   State<CommsTab> createState() => _CommsTabState();
@@ -2947,6 +2958,11 @@ class _CommsTabState extends State<CommsTab>
       child: Column(
         children: [
           _buildHeader(),
+          if (widget.remotePtt != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: RemotePttPanel(state: widget.remotePtt),
+            ),
           if (_isMuted && _sstvAutoMuted) _buildMuteBanner(),
           if (_showDeemphasisWarning) _buildDeemphasisBanner(),
           Expanded(
