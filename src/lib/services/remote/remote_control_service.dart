@@ -139,9 +139,10 @@ class RemoteControlService {
           // settings/channel gate are both inert -- which is exactly the bug
           // this wiring was missing.
           operatorLock: operatorLock,
-          // A host that exposes a listener should not also leak its audio
-          // unless asked; the settings screen owns that choice (T4d flag).
-          forwardHostAudio: false,
+          // Driven by the user's switch (T4g), not hardcoded: previously this
+          // was always false, so a host never streamed audio at all.
+          forwardHostAudio: config.forwardAudio,
+          audioOutputRate: config.audioTierRate,
         );
         if (!await server.start()) {
           _errors.add('Could not listen on port ${config.port}.');

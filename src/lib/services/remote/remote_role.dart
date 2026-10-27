@@ -53,7 +53,12 @@ class RemoteRoleConfig {
     this.role = RemoteAppRole.standalone,
     this.hostUrl = '',
     this.port = 0,
+    this.forwardAudio = true,
+    this.audioTierRate,
   });
+
+  /// The radio's native rate; a wire tier must be below it to mean anything.
+  static const int radioSourceRate = 32000;
 
   final RemoteAppRole role;
 
@@ -63,6 +68,16 @@ class RemoteRoleConfig {
 
   /// Port to listen on in [RemoteAppRole.host]; 0 picks a free one.
   final int port;
+
+  /// Whether the host streams its audio to clients (T4d capability, T4g switch).
+  ///
+  /// Defaults to true for a host: streaming nothing makes a host a degenerate
+  /// control-only server, and the switch exists so the user can opt out.
+  final bool forwardAudio;
+
+  /// Wire sample rate for audio (decision D6). Null passes the source rate
+  /// through unchanged; 16000 or 8000 filter and decimate down to that tier.
+  final int? audioTierRate;
 
   /// Whether moving from [other] to this config needs a relaunch.
   ///
@@ -92,6 +107,12 @@ class RemoteRoleConfig {
         if (port < 0 || port > 65535) {
           problems.add('Port must be between 0 and 65535.');
         }
+        final tier = audioTierRate;
+        if (tier != null && (tier <= 0 || tier >= radioSourceRate)) {
+          // Asking for the source rate or more would mean decimating to nothing;
+          // saying so is better than silently ignoring the setting.
+          problems.add('Audio quality must be below the radio rate (32 kHz).');
+        }
         break;
       case RemoteAppRole.standalone:
         break;
@@ -107,6 +128,8 @@ class RemoteRoleStore {
   static const String roleKey = 'RemoteRole';
   static const String hostUrlKey = 'RemoteHostUrl';
   static const String portKey = 'RemotePort';
+  static const String forwardAudioKey = 'RemoteForwardAudio';
+  static const String audioTierKey = 'RemoteAudioTierRate';
 
   /// Loads the stored config. A missing or unreadable value reads as
   /// standalone, so an install never starts listening by accident.
@@ -117,8 +140,18 @@ class RemoteRoleStore {
       ),
       hostUrl: DataBroker.getValue<String>(deviceId, hostUrlKey, '') ?? '',
       port: DataBroker.getValue<int>(deviceId, portKey, 0) ?? 0,
+      forwardAudio:
+          DataBroker.getValue<bool>(deviceId, forwardAudioKey, true) ?? true,
+      // 0 is the persisted stand-in for "no tier selected".
+      audioTierRate: _tierFromStored(
+        DataBroker.getValue<int>(deviceId, audioTierKey, 0) ?? 0,
+      ),
     );
   }
+
+  static int? _tierFromStored(int stored) => stored > 0 ? stored : null;
+
+  static int _tierToStored(int? tier) => tier ?? 0;
 
   /// Persists [config]; device-0 values are written to SharedPreferences.
   static void save(RemoteRoleConfig config, {int deviceId = 0}) {
@@ -138,6 +171,18 @@ class RemoteRoleStore {
       deviceId: deviceId,
       name: portKey,
       data: config.port,
+      store: true,
+    );
+    DataBroker.dispatch(
+      deviceId: deviceId,
+      name: forwardAudioKey,
+      data: config.forwardAudio,
+      store: true,
+    );
+    DataBroker.dispatch(
+      deviceId: deviceId,
+      name: audioTierKey,
+      data: _tierToStored(config.audioTierRate),
       store: true,
     );
   }

@@ -112,6 +112,10 @@ class _SettingsDialogState extends State<SettingsDialog>
   /// Current role shown in the dropdown.
   RemoteAppRole _remoteRole = RemoteAppRole.standalone;
 
+  /// Whether the host streams its audio, and at which D6 tier.
+  bool _remoteForwardAudio = true;
+  int? _remoteAudioTierRate;
+
   /// Result line under the Apply button.
   String _remoteStatus = '';
 
@@ -371,6 +375,8 @@ class _SettingsDialogState extends State<SettingsDialog>
     );
     final remoteConfig = RemoteRoleStore.load();
     _remoteRole = remoteConfig.role;
+    _remoteForwardAudio = remoteConfig.forwardAudio;
+    _remoteAudioTierRate = remoteConfig.audioTierRate;
     _remoteHostUrlController = TextEditingController(text: remoteConfig.hostUrl);
     _remotePortController = TextEditingController(
       text: remoteConfig.port == 0 ? '' : remoteConfig.port.toString(),
@@ -1134,6 +1140,8 @@ class _SettingsDialogState extends State<SettingsDialog>
       role: _remoteRole,
       hostUrl: _remoteHostUrlController.text.trim(),
       port: portText.isEmpty ? 0 : (int.tryParse(portText) ?? -1),
+      forwardAudio: _remoteForwardAudio,
+      audioTierRate: _remoteAudioTierRate,
     );
 
     final problems = config.validate();
@@ -1284,6 +1292,52 @@ class _SettingsDialogState extends State<SettingsDialog>
             'network, put a TLS reverse proxy in front of it and forward to '
             'this port.',
             style: DialogStyles.bodyStyle,
+          ),
+          const SizedBox(height: 8),
+          // A plain Checkbox rather than a SwitchListTile: ListTile requires a
+          // Material ancestor, and this settings panel is a bare Column (the
+          // tile variant asserts "ink splashes may be invisible" here).
+          Row(
+            children: [
+              Checkbox(
+                value: _remoteForwardAudio,
+                onChanged: (value) =>
+                    setState(() => _remoteForwardAudio = value ?? false),
+              ),
+              const Expanded(
+                child: Text(
+                  'Stream audio to clients (off gives a control-only session '
+                  'that uses far less bandwidth).',
+                  style: DialogStyles.bodyStyle,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text('Audio quality', style: DialogStyles.labelStyle),
+          const SizedBox(height: 4),
+          DropdownButtonFormField<int?>(
+            initialValue: _remoteAudioTierRate,
+            // Same reason as the role dropdown: without it the closed button
+            // sizes to the widest label and overflows the dialog.
+            isExpanded: true,
+            decoration: _inputDecoration(),
+            items: const [
+              DropdownMenuItem<int?>(
+                value: null,
+                child: Text('Full (32 kHz)'),
+              ),
+              DropdownMenuItem<int?>(
+                value: 16000,
+                child: Text('Medium (16 kHz)'),
+              ),
+              DropdownMenuItem<int?>(
+                value: 8000,
+                child: Text('Low (8 kHz - least data)'),
+              ),
+            ],
+            onChanged: (value) =>
+                setState(() => _remoteAudioTierRate = value),
           ),
           const SizedBox(height: 16),
           const Divider(),
