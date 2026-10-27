@@ -141,6 +141,14 @@ class RemoteBrokerServer {
   /// Last uplink audio time per peer, for burst detection.
   final Map<String, DateTime> _lastTxAt = <String, DateTime>{};
 
+  /// Called whenever transmit authority changes, in addition to the client
+  /// broadcast.
+  ///
+  /// Exists because [RemoteOperatorLock.onHolderChanged] is a single slot that
+  /// this server owns; a service that wants to publish the holder to the UI
+  /// must not steal it, or the broadcast would stop.
+  void Function(String? holderId)? onOperatorChanged;
+
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
   int _nextPeerId = 1;
@@ -534,6 +542,7 @@ class RemoteBrokerServer {
   /// whether the holder is itself -- and "am I the operator?" is the only
   /// question this broadcast exists to answer.
   void _broadcastOperator(String? holderId) {
+    onOperatorChanged?.call(holderId);
     for (final entry in _peers.entries.toList()) {
       try {
         entry.value.add(jsonEncode(<String, Object?>{

@@ -19,6 +19,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../data_broker.dart';
 import 'remote_audio.dart';
 import 'remote_audio_player.dart';
 import 'remote_audio_sink.dart';
@@ -76,6 +77,52 @@ class RemoteControlService {
   /// Owned here rather than by the server so the app can also show who holds
   /// it, and created unconditionally so it exists before start().
   final RemoteOperatorLock operatorLock = RemoteOperatorLock();
+
+  /// Device id of the broker's app-wide event namespace.
+  static const int appEventDeviceId = 1;
+
+  /// Broker names the app binds to. Device 1 is the event namespace: values
+  /// live in broker memory so any tab (including one that attaches later) can
+  /// read them, while device 0 remains the only persisted settings device.
+  static const String operatorIdKey = 'RemoteOperatorId';
+  static const String isOperatorKey = 'RemoteIsOperator';
+  static const String lastRefusalKey = 'RemoteLastRefusal';
+
+  /// Publishes who holds transmit authority so any tab can bind to it.
+  ///
+  /// Without this the value lived only on an object field, and no widget can
+  /// read an object field -- "show who is transmitting" had nowhere to come
+  /// from, and choosing a screen for it is a UI decision this does not make.
+  ///
+  /// store must be true: with store: false the broker notifies subscribers but
+  /// keeps nothing, so getValue and any late-attaching tab would see no value
+  /// at all. allowEmpty must be true as well, because "nobody holds it" is
+  /// published as an empty string and would otherwise be dropped.
+  void _publishOperator(String? holderId, {bool selfIsOperator = false}) {
+    DataBroker.dispatch(
+      deviceId: appEventDeviceId,
+      name: operatorIdKey,
+      data: holderId ?? '',
+      store: true,
+      allowEmpty: true,
+    );
+    DataBroker.dispatch(
+      deviceId: appEventDeviceId,
+      name: isOperatorKey,
+      data: selfIsOperator,
+      store: true,
+    );
+  }
+
+  /// Publishes the reason a write was refused, for the UI to explain.
+  void _publishRefusal(String reason) {
+    DataBroker.dispatch(
+      deviceId: appEventDeviceId,
+      name: lastRefusalKey,
+      data: reason,
+      store: true,
+    );
+  }
 
   void Function(String peerId, RemoteAudioFrame frame)? _onPeerAudio;
 
@@ -174,7 +221,12 @@ class RemoteControlService {
           return false;
         }
         server.onPeerAudio = _onPeerAudio;
+        server.onOperatorChanged =
+            (String? holderId) => _publishOperator(holderId);
         _server = server;
+        // Publish the current holder immediately, so a UI that opens later is
+        // not blank until the next change.
+        _publishOperator(operatorLock.holderId);
         return true;
 
       case RemoteAppRole.client:
@@ -187,6 +239,13 @@ class RemoteControlService {
           return false;
         }
         _client = client;
+
+        // Mirror the host's operator state into the app's event namespace, and
+        // surface refusals so a UI can explain why an action did nothing.
+        client.onOperatorChanged = (String? holderId) =>
+            _publishOperator(holderId, selfIsOperator: client.isOperator);
+        client.onRefused = (String name, String reason) =>
+            _publishRefusal(reason);
 
         // Play the host's audio when this install has a device for it. A
         // missing speaker is not a connection failure, so a null sink is fine.
