@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "version": "2026.07.12",
-  "sourceDate": 20260712,
-  "url": "https://github.com/Ylianst/HTCommander/releases/download/callsign-db/fcc_amateur.cdb.xz",
+  "version": "2026.10.25",
+  "sourceDate": 20261025,
+  "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db/fcc_amateur-16dafd1fe65701e8cbc6f19429b1ba74.cdb.xz",
   "compressed": true,
-  "sizeBytes": 22400780,
-  "md5": "669fbff5db440892acb1a495a6cefe7b",
-  "recordCount": 1588146,
+  "sizeBytes": 22691044,
+  "md5": "16dafd1fe65701e8cbc6f19429b1ba74",
+  "recordCount": 1605551,
   "overlay": {
-    "version": "2026.10.18",
-    "sourceDate": 20261018,
-    "url": "https://github.com/Ylianst/HTCommander/releases/download/callsign-db/fcc_amateur_overlay-0f15f2efc53cc661e1a74aba5712b852.cdb.xz",
+    "version": "2026.10.25",
+    "sourceDate": 20261025,
+    "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db/fcc_amateur_overlay-9ceebad8bfa18a3f65cd5b20b7d4a8e7.cdb.xz",
     "compressed": true,
-    "sizeBytes": 1831300,
-    "md5": "0f15f2efc53cc661e1a74aba5712b852",
-    "recordCount": 103612
+    "sizeBytes": 88,
+    "md5": "9ceebad8bfa18a3f65cd5b20b7d4a8e7",
+    "recordCount": 0
   }
 }
