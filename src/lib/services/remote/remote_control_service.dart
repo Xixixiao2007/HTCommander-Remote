@@ -18,11 +18,13 @@ leave the user staring at an unchanged app with no idea why.
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'remote_audio.dart';
 import 'remote_audio_player.dart';
 import 'remote_audio_sink.dart';
 import 'remote_audit.dart';
 import 'remote_broker_client.dart';
 import 'remote_broker_server.dart';
+import 'remote_operator_lock.dart';
 import 'remote_role.dart';
 
 /// Owns the server/client lifecycle for one role config.
@@ -59,6 +61,28 @@ class RemoteControlService {
 
   RemoteAudioSink? _audioSink;
   RemoteAudioPlayer? _audioPlayer;
+
+  /// Transmit authority for the host role (decision D5).
+  ///
+  /// Owned here rather than by the server so the app can also show who holds
+  /// it, and created unconditionally so it exists before start().
+  final RemoteOperatorLock operatorLock = RemoteOperatorLock();
+
+  void Function(String peerId, RemoteAudioFrame frame)? _onPeerAudio;
+
+  /// Receives uplink audio from authorised peers (transmit path, T5d-b).
+  ///
+  /// A setter rather than a constructor argument because the transmit injector
+  /// needs the broker to be up, which happens after the service is built. Late
+  /// attach is forwarded to the running server, so callers need not care about
+  /// ordering.
+  set onPeerAudio(void Function(String peerId, RemoteAudioFrame frame)? handler) {
+    _onPeerAudio = handler;
+    _server?.onPeerAudio = handler;
+  }
+
+  void Function(String peerId, RemoteAudioFrame frame)? get onPeerAudio =>
+      _onPeerAudio;
 
   /// The playback sink, when received audio is being played.
   RemoteAudioSink? get audioSink => _audioSink;
@@ -111,6 +135,10 @@ class RemoteControlService {
         final server = RemoteBrokerServer(
           port: config.port,
           auditLog: auditLog,
+          // Without this the server's D5 transmit gate and its Q11
+          // settings/channel gate are both inert -- which is exactly the bug
+          // this wiring was missing.
+          operatorLock: operatorLock,
           // A host that exposes a listener should not also leak its audio
           // unless asked; the settings screen owns that choice (T4d flag).
           forwardHostAudio: false,
@@ -119,6 +147,7 @@ class RemoteControlService {
           _errors.add('Could not listen on port ${config.port}.');
           return false;
         }
+        server.onPeerAudio = _onPeerAudio;
         _server = server;
         return true;
 
