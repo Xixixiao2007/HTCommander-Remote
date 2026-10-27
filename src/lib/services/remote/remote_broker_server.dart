@@ -37,6 +37,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../data_broker.dart';
+import 'remote_token_store.dart';
 
 /// Serves the DataBroker protocol to remote HTCommander clients over WebSocket.
 class RemoteBrokerServer {
@@ -44,14 +45,30 @@ class RemoteBrokerServer {
   ///
   /// [bindAddress] defaults to loopback: the remote-control channel must be
   /// reachable only through whatever the operator fronts it with.
-  RemoteBrokerServer({this.port = 0, InternetAddress? bindAddress})
-      : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
+  ///
+  /// [tokenStore] is consulted when [requireAuth] is true. [requireAuth]
+  /// defaults to **false** only so the T1 transport tests keep working with no
+  /// credentials; **T3 must pass `true`** when it wires this into the app. A
+  /// release that leaves it false exposes the radio to anything that can reach
+  /// the listener.
+  RemoteBrokerServer({
+    this.port = 0,
+    InternetAddress? bindAddress,
+    this.tokenStore,
+    this.requireAuth = false,
+  }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
   static const String endpointPath = '/remote';
 
   final int port;
   final InternetAddress bindAddress;
+
+  /// Verifies `Authorization: Bearer <token>` on the upgrade request.
+  final RemoteTokenStore? tokenStore;
+
+  /// Whether a valid token is required to attach. See the constructor note.
+  final bool requireAuth;
 
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
@@ -113,6 +130,23 @@ class RemoteBrokerServer {
       request.response.statusCode = HttpStatus.notFound;
       await request.response.close();
       return;
+    }
+
+    // Authenticate BEFORE upgrading, so a rejected client never gets a
+    // WebSocket at all and learns nothing about the host's state.
+    if (requireAuth) {
+      final header =
+          request.headers.value(HttpHeaders.authorizationHeader);
+      final result =
+          tokenStore?.verify(header) ?? RemoteAuthResult.missingToken;
+      if (result != RemoteAuthResult.ok) {
+        request.response.statusCode = HttpStatus.unauthorized;
+        // Deliberately terse: do not distinguish "no token" from "wrong token"
+        // from "revoked" in the response body.
+        request.response.headers.contentType = ContentType.text;
+        await request.response.close();
+        return;
+      }
     }
 
     WebSocket socket;
