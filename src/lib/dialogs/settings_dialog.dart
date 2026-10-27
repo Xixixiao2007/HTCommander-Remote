@@ -116,6 +116,11 @@ class _SettingsDialogState extends State<SettingsDialog>
   bool _remoteForwardAudio = true;
   int? _remoteAudioTierRate;
 
+  /// Whether the host listens on the LAN, and whether it trusts a forwarded-for
+  /// header. Both default to the safe answer.
+  bool _remoteAllowLan = false;
+  bool _remoteTrustForwarded = false;
+
   /// Result line under the Apply button.
   String _remoteStatus = '';
 
@@ -377,6 +382,8 @@ class _SettingsDialogState extends State<SettingsDialog>
     _remoteRole = remoteConfig.role;
     _remoteForwardAudio = remoteConfig.forwardAudio;
     _remoteAudioTierRate = remoteConfig.audioTierRate;
+    _remoteAllowLan = remoteConfig.allowLanAccess;
+    _remoteTrustForwarded = remoteConfig.trustForwardedFor;
     _remoteHostUrlController = TextEditingController(text: remoteConfig.hostUrl);
     _remotePortController = TextEditingController(
       text: remoteConfig.port == 0 ? '' : remoteConfig.port.toString(),
@@ -1142,6 +1149,8 @@ class _SettingsDialogState extends State<SettingsDialog>
       port: portText.isEmpty ? 0 : (int.tryParse(portText) ?? -1),
       forwardAudio: _remoteForwardAudio,
       audioTierRate: _remoteAudioTierRate,
+      allowLanAccess: _remoteAllowLan,
+      trustForwardedFor: _remoteTrustForwarded,
     );
 
     final problems = config.validate();
@@ -1338,6 +1347,39 @@ class _SettingsDialogState extends State<SettingsDialog>
             ],
             onChanged: (value) =>
                 setState(() => _remoteAudioTierRate = value),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Checkbox(
+                value: _remoteAllowLan,
+                onChanged: (value) =>
+                    setState(() => _remoteAllowLan = value ?? false),
+              ),
+              const Expanded(
+                child: Text(
+                  'Accept connections from other devices on the network. '
+                  'Off means this machine only, which is the safe default.',
+                  style: DialogStyles.bodyStyle,
+                ),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              Checkbox(
+                value: _remoteTrustForwarded,
+                onChanged: (value) =>
+                    setState(() => _remoteTrustForwarded = value ?? false),
+              ),
+              const Expanded(
+                child: Text(
+                  'Trust X-Forwarded-For from a reverse proxy (affects the '
+                  'audit log only, never authentication).',
+                  style: DialogStyles.bodyStyle,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           const Divider(),

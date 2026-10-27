@@ -27,6 +27,20 @@ import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/remote/remote_audio.dart';
 import 'package:htcommander/services/remote/remote_control_service.dart';
 import 'package:htcommander/services/remote/remote_role.dart';
+import 'package:htcommander/services/remote/remote_token_store.dart';
+
+/// In-memory secret store stand-in, so tests never touch the platform channel.
+class _FakeSecrets {
+  final Map<String, String> values = <String, String>{};
+  Future<String?> read(String name) async => values[name];
+  Future<void> write(String name, String? value) async {
+    if (value == null || value.isEmpty) {
+      values.remove(name);
+    } else {
+      values[name] = value;
+    }
+  }
+}
 
 Future<bool> _waitFor(
   bool Function() test, {
@@ -94,19 +108,35 @@ void main() {
   });
 
   late RemoteControlService service;
+  late RemoteTokenStore tokens;
+  late String tokenSecret;
   late _Peer alice;
   late _Peer bob;
+
+  setUp(() async {
+    final secrets = _FakeSecrets();
+    tokens = RemoteTokenStore(read: secrets.read, write: secrets.write);
+    tokenSecret = (await tokens.create('wiring-test')).secret;
+  });
+
+  /// Connects with the token the host expects. A host requires authentication
+  /// unconditionally now, so an anonymous connect is refused with 401.
+  Future<WebSocket> connectPeer(String url) => WebSocket.connect(
+        url,
+        headers: <String, dynamic>{'Authorization': 'Bearer $tokenSecret'},
+      );
 
   Future<void> startHost() async {
     service = RemoteControlService(
       config: const RemoteRoleConfig(role: RemoteAppRole.host),
+      tokenStore: tokens,
     );
     expect(await service.start(), isTrue);
     expect(service.operatorLock, isNotNull,
         reason: 'AC-W1: host mode must own an operator lock');
     final url = 'ws://127.0.0.1:${service.server!.boundPort}/remote';
-    alice = _Peer(await WebSocket.connect(url));
-    bob = _Peer(await WebSocket.connect(url));
+    alice = _Peer(await connectPeer(url));
+    bob = _Peer(await connectPeer(url));
     expect(await _waitFor(() => service.server!.clientCount == 2), isTrue);
   }
 
@@ -146,12 +176,13 @@ void main() {
     final heard = <RemoteAudioFrame>[];
     service = RemoteControlService(
       config: const RemoteRoleConfig(role: RemoteAppRole.host),
+      tokenStore: tokens,
     )..onPeerAudio = (String peerId, RemoteAudioFrame frame) => heard.add(frame);
 
     expect(await service.start(), isTrue);
     final url = 'ws://127.0.0.1:${service.server!.boundPort}/remote';
-    alice = _Peer(await WebSocket.connect(url));
-    bob = _Peer(await WebSocket.connect(url));
+    alice = _Peer(await connectPeer(url));
+    bob = _Peer(await connectPeer(url));
     expect(await _waitFor(() => service.server!.clientCount == 2), isTrue);
 
     alice.acquire();

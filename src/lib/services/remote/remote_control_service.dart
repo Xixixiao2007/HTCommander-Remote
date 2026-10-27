@@ -16,6 +16,7 @@ leave the user staring at an unchanged app with no idea why.
 */
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'remote_audio.dart';
@@ -26,6 +27,7 @@ import 'remote_broker_client.dart';
 import 'remote_broker_server.dart';
 import 'remote_operator_lock.dart';
 import 'remote_role.dart';
+import 'remote_token_store.dart';
 
 /// Owns the server/client lifecycle for one role config.
 class RemoteControlService {
@@ -34,6 +36,7 @@ class RemoteControlService {
     this.token,
     this.auditLog,
     this.audioSinkFactory,
+    this.tokenStore,
   });
 
   /// What to run. Read once at startup; a role change is applied by rebuilding
@@ -54,6 +57,12 @@ class RemoteControlService {
   /// state, it just does not play the host's audio. Injected so the service
   /// stays testable -- PcmPlayer needs a platform audio channel.
   final RemoteAudioSinkFactory? audioSinkFactory;
+
+  /// Token store the host authenticates clients against.
+  ///
+  /// Injectable so tests never touch the platform secret store. Production
+  /// leaves it null and the default store (SecretStore-backed) is used.
+  final RemoteTokenStore? tokenStore;
 
   /// Rate the playback device is opened at. A host passes the radio rate
   /// through unchanged by default, so this matches the wire.
@@ -132,8 +141,24 @@ class RemoteControlService {
         return true;
 
       case RemoteAppRole.host:
+        // Authentication is mandatory for a host, always. Decision D1 has
+        // required application-level auth from the start; wiring it as an
+        // option would mean the default deployment is an open port.
+        final store = tokenStore ?? RemoteTokenStore();
+        try {
+          await store.load();
+        } catch (_) {
+          // No secret store on this platform: the host stays closed to
+          // everyone, which is the safe direction to fail.
+        }
+
         final server = RemoteBrokerServer(
           port: config.port,
+          // Loopback unless the user deliberately opted into LAN exposure.
+          bindAddress: config.allowLanAccess ? InternetAddress.anyIPv4 : null,
+          tokenStore: store,
+          requireAuth: true,
+          trustForwardedFor: config.trustForwardedFor,
           auditLog: auditLog,
           // Without this the server's D5 transmit gate and its Q11
           // settings/channel gate are both inert -- which is exactly the bug

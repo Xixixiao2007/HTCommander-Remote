@@ -55,6 +55,8 @@ class RemoteRoleConfig {
     this.port = 0,
     this.forwardAudio = true,
     this.audioTierRate,
+    this.allowLanAccess = false,
+    this.trustForwardedFor = false,
   });
 
   /// The radio's native rate; a wire tier must be below it to mean anything.
@@ -78,6 +80,18 @@ class RemoteRoleConfig {
   /// Wire sample rate for audio (decision D6). Null passes the source rate
   /// through unchanged; 16000 or 8000 filter and decimate down to that tier.
   final int? audioTierRate;
+
+  /// Whether the host listens on all interfaces instead of loopback only.
+  ///
+  /// Off by default: binding to 0.0.0.0 exposes the port to the whole LAN, and
+  /// that must be a deliberate choice rather than something that happens the
+  /// first time someone flips the role to Host.
+  final bool allowLanAccess;
+
+  /// Whether to believe `X-Forwarded-For` when recording a client address.
+  ///
+  /// Audit-only either way; see remote_client_address.dart.
+  final bool trustForwardedFor;
 
   /// Whether moving from [other] to this config needs a relaunch.
   ///
@@ -130,6 +144,8 @@ class RemoteRoleStore {
   static const String portKey = 'RemotePort';
   static const String forwardAudioKey = 'RemoteForwardAudio';
   static const String audioTierKey = 'RemoteAudioTierRate';
+  static const String allowLanKey = 'RemoteAllowLan';
+  static const String trustForwardedKey = 'RemoteTrustForwardedFor';
 
   /// Loads the stored config. A missing or unreadable value reads as
   /// standalone, so an install never starts listening by accident.
@@ -146,6 +162,11 @@ class RemoteRoleStore {
       audioTierRate: _tierFromStored(
         DataBroker.getValue<int>(deviceId, audioTierKey, 0) ?? 0,
       ),
+      allowLanAccess:
+          DataBroker.getValue<bool>(deviceId, allowLanKey, false) ?? false,
+      trustForwardedFor:
+          DataBroker.getValue<bool>(deviceId, trustForwardedKey, false) ??
+              false,
     );
   }
 
@@ -183,6 +204,18 @@ class RemoteRoleStore {
       deviceId: deviceId,
       name: audioTierKey,
       data: _tierToStored(config.audioTierRate),
+      store: true,
+    );
+    DataBroker.dispatch(
+      deviceId: deviceId,
+      name: allowLanKey,
+      data: config.allowLanAccess,
+      store: true,
+    );
+    DataBroker.dispatch(
+      deviceId: deviceId,
+      name: trustForwardedKey,
+      data: config.trustForwardedFor,
       store: true,
     );
   }
