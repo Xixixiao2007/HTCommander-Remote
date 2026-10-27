@@ -5,8 +5,10 @@ plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
-    // Firebase Cloud Messaging (push notifications for APRS cloud messages).
-    id("com.google.gms.google-services")
+    // com.google.gms.google-services is absent on purpose: this fork does not
+    // ship APRS cloud push, so there is no google-services.json to process.
+    // Without that plugin the applicationId is free to differ from upstream's,
+    // which is what lets both builds coexist on one device.
 }
 
 val keystoreProperties = Properties()
@@ -31,8 +33,18 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.meshcentral.htcommander"
+        // Distinct from upstream's com.meshcentral.htcommander on purpose.
+        //
+        // The two builds are signed with different keys, so Android refuses to
+        // install one over the other (INSTALL_FAILED_UPDATE_INCOMPATIBLE) --
+        // meaning trying this fork would first destroy the official app's
+        // settings, channels and tokens on the device. A separate application
+        // id lets both coexist, each with its own data.
+        //
+        // namespace stays com.meshcentral.htcommander: MainActivity,
+        // RadioCarAppService and the Dart entrypoint all resolve through that
+        // package, and only the install identity needs to differ.
+        applicationId = "com.meshcentral.htcommander.remote"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // Firebase Cloud Messaging (firebase_messaging) requires a minimum of

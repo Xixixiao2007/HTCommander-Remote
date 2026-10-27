@@ -22,6 +22,13 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Kept for reference, deliberately not compiled. This is upstream's real
+    # APRS cloud push implementation; it imports firebase_messaging, which this
+    # fork removed (see pubspec.yaml), so it would no longer resolve. main.dart
+    # imports the no-op aprs_cloud_service_stub.dart on every platform instead.
+    # Restoring the feature means re-adding the dependencies and pointing
+    # main.dart back here -- deleting the file would hide that path.
+    - lib/services/aprs_cloud_service.dart
 
 linter:
   # The lint rules applied to this project can be customized in the

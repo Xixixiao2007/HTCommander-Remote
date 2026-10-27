@@ -21,8 +21,8 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "8.11.1" apply false
     id("org.jetbrains.kotlin.android") version "2.2.20" apply false
-    // Firebase Cloud Messaging: processes google-services.json at build time.
-    id("com.google.gms.google-services") version "4.4.2" apply false
+    // com.google.gms.google-services removed with APRS cloud push; see
+    // app/build.gradle.kts for why.
 }
 
 include(":app")
