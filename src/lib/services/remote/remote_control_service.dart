@@ -29,6 +29,8 @@ import 'remote_broker_server.dart';
 import 'remote_operator_lock.dart';
 import 'remote_role.dart';
 import 'remote_token_store.dart';
+import 'remote_tx_injector.dart';
+import 'remote_tx_target.dart';
 
 /// Owns the server/client lifecycle for one role config.
 class RemoteControlService {
@@ -126,6 +128,66 @@ class RemoteControlService {
 
   void Function(String peerId, RemoteAudioFrame frame)? _onPeerAudio;
 
+  /// Observation hook for transmit dispatches, used by tests.
+  ///
+  /// A seam rather than a second dispatch path: the injector's dispatch still
+  /// goes to the broker, this only reports it.
+  void Function(int deviceId, String name)? onTxDispatch;
+
+  /// One injector per target radio, created on demand.
+  ///
+  /// Keyed by device id because the target follows the host's radio selection
+  /// and can change between frames; a single injector built for one radio would
+  /// key the wrong station after the selection moves.
+  final Map<int, RemoteTxInjector> _injectors = <int, RemoteTxInjector>{};
+
+  /// Whether the operator's own transmit switch allows transmitting at all.
+  ///
+  /// The engine's AllowTransmit check does not cover the voice path, so this is
+  /// the only enforcement for remote audio.
+  bool _allowTransmit() =>
+      (DataBroker.getValue<int>(0, 'AllowTransmit', 0) ?? 0) == 1;
+
+  /// Routes uplink audio: external observers first, then the radio transmit path.
+  void _handleUplink(String peerId, RemoteAudioFrame frame) {
+    _onPeerAudio?.call(peerId, frame);
+
+    final target = RemoteTxTarget.resolveFromBroker();
+    if (!target.canTransmit) {
+      // Say why rather than appearing to work: a silent no-op is
+      // indistinguishable from a broken link.
+      _publishRefusal(target.refusal ?? 'No transmit target.');
+      return;
+    }
+
+    final injector = _injectors.putIfAbsent(
+      target.deviceId,
+      () => RemoteTxInjector(
+        deviceId: target.deviceId,
+        dispatch: (int deviceId, String name, Object? data) {
+          onTxDispatch?.call(deviceId, name);
+          DataBroker.dispatch(
+            deviceId: deviceId,
+            name: name,
+            data: data,
+            store: false,
+          );
+        },
+        canTransmit: _allowTransmit,
+      ),
+    );
+    injector.onPeerAudio(peerId, frame);
+  }
+
+  /// Releases every injector so no stream is left holding a radio keyed.
+  Future<void> _disposeInjectors() async {
+    final all = _injectors.values.toList();
+    _injectors.clear();
+    for (final injector in all) {
+      await injector.dispose();
+    }
+  }
+
   /// Receives uplink audio from authorised peers (transmit path, T5d-b).
   ///
   /// A setter rather than a constructor argument because the transmit injector
@@ -220,7 +282,7 @@ class RemoteControlService {
           _errors.add('Could not listen on port ${config.port}.');
           return false;
         }
-        server.onPeerAudio = _onPeerAudio;
+        server.onPeerAudio = _handleUplink;
         server.onOperatorChanged =
             (String? holderId) => _publishOperator(holderId);
         _server = server;
@@ -270,6 +332,10 @@ class RemoteControlService {
 
   /// Tears everything down. Safe to call when nothing is running.
   Future<void> stop() async {
+    // Release any keyed radio before tearing the server down: an injector still
+    // holding a stream would leave the transmitter on after the session ends.
+    await _disposeInjectors();
+
     // Stop feeding first, then release the device, so a block cannot land on a
     // released sink.
     final player = _audioPlayer;
