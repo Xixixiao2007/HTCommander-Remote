@@ -1,5 +1,7 @@
 # HTCommander-Remote
 
+**English** | [简体中文](README.zh-CN.md)
+
 A fork of [Handi-Talky Commander](https://github.com/Ylianst/HTCommander) that
 adds **native remote control**: the same application can either attach to a
 radio and serve remote clients, or run as a secondary client of such a host.
