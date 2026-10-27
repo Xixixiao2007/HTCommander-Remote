@@ -98,9 +98,30 @@ did what.
 
 ## Getting a build
 
-**There are no pre-built binaries for this fork.** The upstream installers do
-not contain the remote-control feature, so downloading them will not give you
-what this repository adds.
+### ⚠️ Pre-built packages: available, and handled with tongs
+
+Packages are attached to [Releases](https://github.com/Xixixiao2007/HTCommander-Remote/releases)
+for **Windows (x64), Android, and Web**.
+
+**Read this before you install one.** These are built on one machine by the
+maintainer, not by a release pipeline, and they have had very little field
+testing:
+
+- **They may not work.** Remote control has been exercised on exactly one
+  phone talking to exactly one PC. Everything else is unproven.
+- **Only Windows was run end-to-end here.** Android installs and launches; the
+  remote session was then verified on it. Web builds; nobody has driven a
+  remote session from a browser.
+- **Linux and macOS have no packages.** They cannot be built on a Windows
+  machine, and this fork has no working release pipeline (upstream's needs
+  signing certificates this fork does not have). Build from source.
+- **Nothing is code-signed**, so Windows SmartScreen and macOS Gatekeeper will
+  warn. That warning is accurate: nobody has audited these binaries but you.
+- **No updates.** The self-updater points at upstream's release channel, which
+  does not carry this fork's builds — expect it not to offer you anything.
+
+If a package misbehaves, building from source below is the reliable path, and
+an issue describing what happened is welcome.
 
 ### Build from source
 
@@ -122,6 +143,10 @@ $env:CMAKE_POLICY_VERSION_MINIMUM = '3.5'       # CMake 4 rejects the pinned plu
 
 Building with plugins also requires **symlink support**: enable Windows
 Developer Mode, or run the shell as administrator.
+
+For Android, the toolchain expects **JDK 17+** and an SDK platform that matches
+`compileSdk` (37 at the time of writing). `flutter doctor` names whatever is
+missing.
 
 ### Or: use the upstream build, and lose this fork's feature
 

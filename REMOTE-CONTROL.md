@@ -60,6 +60,30 @@ does not.
 | Host | Listen port, *Accept connections from other devices*, *Stream audio to clients*, Audio quality, *Trust X-Forwarded-For*, Access tokens | Serves `/remote` on that port for authenticated clients |
 | Client | Host address (`ws://` or `wss://`), access token | Attaches to that host and mirrors its state |
 
+### This build installs alongside the upstream app
+
+The Android application id is `com.meshcentral.htcommander.remote`, not
+upstream's `com.meshcentral.htcommander`. The two are signed with different keys,
+so Android refuses to install one over the other
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), which would have meant deleting the
+official app -- and its settings, channels and tokens -- just to try this fork.
+With a separate id both can be installed, each with its own data.
+
+They are otherwise independent: use whichever you are testing with. On desktop
+the executable is still `htcommander.exe` and a build replaces the previous one.
+
+### APRS cloud push is not built in
+
+Upstream delivers APRS messages as background push notifications through
+Firebase Cloud Messaging, which routes them via Google. This fork removes that
+path: no Firebase dependency, no `google-services.json` processing, and the
+service is compiled as a no-op. A switch you may have seen in Settings does
+nothing here.
+
+Nothing else is affected — local notifications, APRS itself, the maps, Winlink,
+the terminal and remote control all work as before. See the fork-vs-upstream
+table in the README.
+
 ### Two defaults that will surprise you
 
 **The host listens on 127.0.0.1 only.** A client on another machine cannot
@@ -168,7 +192,7 @@ back onto the speech band.
 
 ## Current status
 
-Working:
+Working, and exercised on a phone against a PC:
 
 - Host and client roles, role-driven startup, settings UI
 - Broker state mirroring in both directions
@@ -178,20 +202,33 @@ Working:
   writes, with the holder published so any tab can display it
 - Two-way audio: host playback → client speaker, at a selectable 32 / 16 / 8 kHz
   tier; audio streaming is a switch you can turn off for a control-only session
-- The client uplink is gated on holding operator authority, so a hot microphone
-  cannot transmit on someone else's authority
+- **Client transmit** (press-and-hold): the microphone opens on the press and
+  closes on release or cancel, and the uplink is gated on holding authority, so
+  a hot microphone cannot transmit on somebody else's authority
+- **The control states which of the three outcomes applies**: available
+  (nobody holds it), ready (you hold it), in use: *id* (another client does).
+  A bare "not the operator" could not distinguish an idle station from a busy
+  one, which is what made the device UI unreadable
+- **Authority is kept for five minutes after release**, so consecutive
+  transmissions do not race another client each time. The window is one number
+  shared by both sides; when the client and host disagreed the host reclaimed it
+  after 34 seconds. Speaking counts as activity, so a long transmission is not
+  interrupted mid-sentence
 - Audit trail recording attach, rejected attach, detach, refused writes, and
   transmissions (one entry per burst, not per frame), persisted when a database
   is available
 - Loopback by default with an explicit LAN opt-in, and audit-only
   `X-Forwarded-For`
 
-Not yet wired:
+Not yet proven:
 
-- The OS microphone capture device and injecting received audio into the host's
-  transmit chain. The wire seam, rate conversion, transmit-authority gate and
-  the stall watchdog are done and tested; what is missing is the capture device
-  on the client and the choice of which radio to key on the host.
+- **One phone, one PC.** Nothing here has been exercised across a range of
+  devices, Android versions, NAT setups, or through the TLS reverse proxy the
+  design assumes. Treat the feature as working, not as validated.
+- **Web is untested for this feature.** The web build exists and remote control
+  is not compiled out of it; nobody has driven a session from a browser.
+- **iOS contributes only control.** It builds upstream, but no remote audio path
+  has been tried there.
 
 ---
 
