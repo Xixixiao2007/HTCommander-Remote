@@ -258,7 +258,11 @@ class RemoteControlService {
     if (!target.canTransmit) {
       // Say why rather than appearing to work: a silent no-op is
       // indistinguishable from a broken link.
-      _publishRefusal(target.refusal ?? 'No transmit target.');
+      final reason = target.refusal ?? 'No transmit target.';
+      _publishRefusal(reason);
+      // The operator cannot read the host's broker, so tell them directly over
+      // the wire. Publishing locally alone left them with no feedback at all.
+      _server?.sendRefused(peerId, 'TransmitVoicePCM', reason);
       return;
     }
 

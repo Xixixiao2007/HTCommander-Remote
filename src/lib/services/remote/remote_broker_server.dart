@@ -536,6 +536,26 @@ class RemoteBrokerServer {
     }
   }
 
+  /// Tells one peer that an action was refused, with a reason.
+  ///
+  /// Exists because a refusal decided on the host -- "no radio to transmit on",
+  /// for instance -- used to be published only to the host's own broker, where
+  /// the remote operator cannot see it. The client then appeared to work and
+  /// silently did nothing.
+  void sendRefused(String peerId, String name, String reason) {
+    final socket = _peers[peerId];
+    if (socket == null) return;
+    try {
+      socket.add(jsonEncode(<String, Object?>{
+        'm': 'refused',
+        'name': name,
+        'reason': reason,
+      }));
+    } catch (_) {
+      // Peer vanished mid-send; its close handler detaches it.
+    }
+  }
+
   /// Tells every attached peer who currently holds transmit authority.
   ///
   /// Each peer also gets its own id in `you`, because otherwise it cannot tell
