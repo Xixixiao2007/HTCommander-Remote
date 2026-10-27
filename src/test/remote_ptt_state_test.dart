@@ -16,6 +16,7 @@
 //   AC-T5j.2  once granted, the pending press opens the microphone
 //   AC-T5j.3  releasing stops transmitting but keeps authority for 5 minutes
 //   AC-T5j.4  a refusal is exposed for display
+//   AC-T5j.4b obtaining authority clears an earlier refusal
 //   AC-T5j.5  the binding reports who else holds the transmitter
 //   AC-T5j.6  dispose leaves nothing held
 
@@ -146,6 +147,24 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await DataBroker.initialize();
+    // DataBroker is a process-wide singleton: initialize() does not reset the
+    // device-1 event namespace, so a refusal published by one test stayed
+    // visible to the next one. Clear the three keys this suite asserts on, so
+    // each test starts from "no authority, no refusal" rather than inheriting
+    // its predecessor's outcome.
+    for (final key in <String>[
+      RemoteControlService.isOperatorKey,
+      RemoteControlService.operatorIdKey,
+      RemoteControlService.lastRefusalKey,
+    ]) {
+      DataBroker.dispatch(
+        deviceId: RemoteControlService.appEventDeviceId,
+        name: key,
+        data: '',
+        store: true,
+        allowEmpty: true,
+      );
+    }
     host = await _FakeHost.start();
     mic = _FakeMic();
     service = RemoteControlService(
@@ -260,6 +279,24 @@ void main() {
     final exposed = await _waitFor(() => ptt.refusalReason != null);
     expect(exposed, isTrue, reason: 'a silent no-op looks like a broken link');
     expect(ptt.refusalReason, 'not-operator');
+  });
+
+  test('AC-T5j.4b obtaining authority clears an earlier refusal', () async {
+    // Real device report: the control transmitted correctly (the button turned
+    // red, audio flowed) and still displayed "Refused: not-operator", because
+    // the reason from the first attempt was cached and never cleared. A stale
+    // error states the opposite of the truth, so it has to go when authority
+    // arrives.
+    host.refuse('TransmitVoicePCM');
+    expect(await _waitFor(() => ptt.refusalReason != null), isTrue);
+
+    host.grant('remote-4');
+    expect(await _waitFor(() => ptt.isOperator), isTrue);
+    expect(
+      ptt.refusalReason,
+      isNull,
+      reason: 'holding the transmitter makes the earlier refusal obsolete',
+    );
   });
 
   test('AC-T5j.5 the binding reports who else holds the transmitter', () async {

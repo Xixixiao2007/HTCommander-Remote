@@ -59,6 +59,13 @@ class RemotePttButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final active = isTransmitting;
+    // Diagnostic on purpose: the control showed a "Refused" label while no
+    // press ever reached the callbacks, and nothing in the log said whether
+    // that was a disabled button or a gesture that missed it.
+    debugPrint(
+      'PTTButton: build enabled=$enabled isOperator=$isOperator '
+      'transmitting=$active refusal=$refusalReason',
+    );
     final background = !enabled
         ? theme.disabledColor
         : active
@@ -70,10 +77,25 @@ class RemotePttButton extends StatelessWidget {
       enabled: enabled,
       label: active ? 'Transmitting' : 'Hold to talk',
       child: GestureDetector(
-        onTapDown: enabled ? (_) => onPressed() : null,
-        onTapUp: enabled ? (_) => onReleased() : null,
+        onTapDown: enabled
+            ? (_) {
+                debugPrint('PTTButton: tapDown -> onPressed');
+                onPressed();
+              }
+            : null,
+        onTapUp: enabled
+            ? (_) {
+                debugPrint('PTTButton: tapUp -> onReleased');
+                onReleased();
+              }
+            : null,
         // Same handler as onTapUp on purpose: a cancelled gesture must release.
-        onTapCancel: enabled ? () => onReleased() : null,
+        onTapCancel: enabled
+            ? () {
+                debugPrint('PTTButton: tapCancel -> onReleased');
+                onReleased();
+              }
+            : null,
         child: Container(
           width: 108,
           height: 108,

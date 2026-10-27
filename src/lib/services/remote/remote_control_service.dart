@@ -257,6 +257,10 @@ class RemoteControlService {
       deviceId: appEventDeviceId,
       name: lastRefusalKey,
       data: reason,
+      // Stays readable in-session: the UI has to be able to look up the
+      // current reason, and tests assert on it. What must NOT happen is a
+      // fresh PTT state adopting a value left over from an earlier session --
+      // that is fixed where the state is constructed, not here.
       store: true,
     );
   }

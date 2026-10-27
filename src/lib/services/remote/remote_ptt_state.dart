@@ -47,11 +47,16 @@ class RemotePttState extends ChangeNotifier {
       RemoteControlService.operatorIdKey,
       '',
     );
-    _refusal = DataBroker.getValue<String>(
-      RemoteControlService.appEventDeviceId,
-      RemoteControlService.lastRefusalKey,
-      '',
-    );
+    // Deliberately NOT seeded from the broker, unlike the two above.
+    //
+    // A refusal is the verdict on one press, not a state of the connection.
+    // When this read existed, a single early refusal -- typically the first
+    // press, made before authority had been granted -- was persisted and then
+    // adopted by every later state, so the control announced
+    // "Refused: not-operator" while it was in fact transmitting. Starting
+    // empty and letting subscribe() report live refusals is the correct
+    // shape: the reason shown always belongs to something that happened now.
+    _refusal = null;
 
     DataBroker.subscribe(_broker, RemoteControlService.appEventDeviceId,
         RemoteControlService.isOperatorKey, _onIsOperatorChanged);
@@ -91,6 +96,7 @@ class RemotePttState extends ChangeNotifier {
 
   /// The trigger went down.
   void press() {
+    debugPrint('PTT: press (isOperator=$isOperator disposed=$_disposed)');
     if (_disposed) return;
     // A press within the hold window cancels the hand-back, so authority can
     // never be revoked mid-sentence by a timer armed by the previous press.
@@ -98,12 +104,17 @@ class RemotePttState extends ChangeNotifier {
     _holdTimer = null;
     if (service.isOperator) {
       _pendingPress = false;
+      debugPrint('PTT: already operator, opening microphone');
       unawaited(service.setTransmitHeld(true).then((_) => _notify()));
       return;
     }
     // Ask for the transmitter. The press stays pending: once the host grants
     // it, the operator is already holding the button and expects to be heard.
     _pendingPress = true;
+    // Clear the previous outcome so a refusal from an earlier attempt is not
+    // shown as if it were this press's verdict.
+    _refusal = null;
+    debugPrint('PTT: requesting operator authority');
     service.acquireOperator();
     _notify();
   }
@@ -162,7 +173,16 @@ class RemotePttState extends ChangeNotifier {
 
   void _onIsOperatorChanged(int deviceId, String name, Object? data) {
     final granted = data == true;
+    debugPrint('PTT: authority changed to $granted (pending=$_pendingPress)');
     _isOperator = granted;
+    if (granted) {
+      // Holding the transmitter makes any earlier refusal obsolete. Leaving it
+      // in place is why a control that was transmitting correctly still read
+      // "Refused: not-operator": the reason was a stale first-attempt result,
+      // cached and never cleared. A stale error is worse than no error -- it
+      // says the opposite of what is happening.
+      _refusal = null;
+    }
     if (granted && _pendingPress && !_disposed) {
       _pendingPress = false;
       unawaited(service.setTransmitHeld(true));
