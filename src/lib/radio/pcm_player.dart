@@ -65,6 +65,10 @@ abstract class PcmPlayer {
     _extraPlaybackTaps.clear();
   }
 
+  /// How many additional taps are registered (the legacy single slot is not
+  /// counted). Lets a caller assert it unregistered cleanly.
+  static int get extraPlaybackTapCount => _extraPlaybackTaps.length;
+
   /// Feeds [pcm] to every registered tap: the legacy single slot first, then
   /// the additive ones.
   ///

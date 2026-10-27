@@ -37,6 +37,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../../radio/pcm_player.dart';
 import '../data_broker.dart';
 import 'remote_audio.dart';
 import 'remote_audio_resample.dart';
@@ -60,6 +61,7 @@ class RemoteBrokerServer {
     this.tokenStore,
     this.requireAuth = false,
     this.audioOutputRate,
+    this.forwardHostAudio = false,
   }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
@@ -82,6 +84,17 @@ class RemoteBrokerServer {
   /// instead of resetting (and clicking) on every audio callback.
   final Map<int, RemoteAudioDecimator> _decimators =
       <int, RemoteAudioDecimator>{};
+
+  /// Whether host playback audio is streamed to attached peers. Off by
+  /// default: a host that wants control without a 64 KB/s stream should not
+  /// pay for the encode.
+  final bool forwardHostAudio;
+
+  /// The tap registered on [start] and removed on [stop]. The closure is
+  /// stored so the SAME reference can be removed again; relying on method
+  /// tear-off identity would be fragile.
+  void Function(Int16List pcm, int sampleRate, int channels)? _audioTap;
+  bool _tapRegistered = false;
 
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
@@ -151,6 +164,15 @@ class RemoteBrokerServer {
           // Ignore individual request errors while running.
         },
       );
+      // Join the audio path only while we are listening, so a stopped server
+      // cannot accumulate taps across start/stop cycles.
+      if (forwardHostAudio && !_tapRegistered) {
+        _audioTap ??= (Int16List pcm, int rate, int channels) {
+          broadcastAudio(pcm, sampleRate: rate, channels: channels);
+        };
+        PcmPlayer.addPlaybackTap(_audioTap!);
+        _tapRegistered = true;
+      }
       return true;
     } catch (_) {
       _server = null;
@@ -160,6 +182,11 @@ class RemoteBrokerServer {
 
   /// Stops listening and detaches every peer.
   void stop() {
+    if (_tapRegistered) {
+      final tap = _audioTap;
+      if (tap != null) PcmPlayer.removePlaybackTap(tap);
+      _tapRegistered = false;
+    }
     for (final peerId in _peers.keys.toList()) {
       DataBroker.detachRemotePeer(peerId);
     }
