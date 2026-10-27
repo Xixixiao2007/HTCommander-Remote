@@ -39,8 +39,10 @@ import 'dart:typed_data';
 
 import '../../radio/pcm_player.dart';
 import '../data_broker.dart';
+import 'remote_audit.dart';
 import 'remote_audio.dart';
 import 'remote_audio_resample.dart';
+import 'remote_client_address.dart';
 import 'remote_token_store.dart';
 
 /// Serves the DataBroker protocol to remote HTCommander clients over WebSocket.
@@ -62,6 +64,8 @@ class RemoteBrokerServer {
     this.requireAuth = false,
     this.audioOutputRate,
     this.forwardHostAudio = false,
+    this.auditLog,
+    this.trustForwardedFor = false,
   }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
@@ -101,6 +105,19 @@ class RemoteBrokerServer {
   /// Audio inbound on a peer's socket is always uplink, and audio outbound is
   /// always downlink, so no direction tagging is needed on the wire.
   void Function(String peerId, RemoteAudioFrame frame)? onPeerAudio;
+
+  /// Where attach / reject / detach events are recorded. Null disables audit.
+  final RemoteAuditLog? auditLog;
+
+  /// Whether to believe `X-Forwarded-For` when recording a client address.
+  ///
+  /// Off by default: it is an audit convenience, never an authorisation input,
+  /// and only the operator knows whether a reverse proxy is in front.
+  final bool trustForwardedFor;
+
+  /// Per-peer facts kept only so the detach line can name who left.
+  final Map<String, _PeerAuditInfo> _peerAudit =
+      <String, _PeerAuditInfo>{};
 
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
@@ -204,6 +221,7 @@ class RemoteBrokerServer {
       }
     }
     _peers.clear();
+    _peerAudit.clear();
     try {
       _server?.close(force: true);
     } catch (_) {
@@ -222,12 +240,16 @@ class RemoteBrokerServer {
 
     // Authenticate BEFORE upgrading, so a rejected client never gets a
     // WebSocket at all and learns nothing about the host's state.
+    final authHeader = request.headers.value(HttpHeaders.authorizationHeader);
+    final clientAddress = _resolveAddress(request);
+    RemoteToken? admittedToken;
     if (requireAuth) {
-      final header =
-          request.headers.value(HttpHeaders.authorizationHeader);
       final result =
-          tokenStore?.verify(header) ?? RemoteAuthResult.missingToken;
+          tokenStore?.verify(authHeader) ?? RemoteAuthResult.missingToken;
       if (result != RemoteAuthResult.ok) {
+        // Audit the attempt before refusing it: a rejected connection is
+        // exactly the event an operator wants a record of.
+        _record('auth-rejected', address: clientAddress);
         request.response.statusCode = HttpStatus.unauthorized;
         // Deliberately terse: do not distinguish "no token" from "wrong token"
         // from "revoked" in the response body.
@@ -235,6 +257,7 @@ class RemoteBrokerServer {
         await request.response.close();
         return;
       }
+      admittedToken = _findActiveToken(authHeader);
     }
 
     WebSocket socket;
@@ -247,6 +270,18 @@ class RemoteBrokerServer {
 
     final peerId = 'remote-${_nextPeerId++}';
     _peers[peerId] = socket;
+    _peerAudit[peerId] = _PeerAuditInfo(
+      address: clientAddress,
+      tokenId: admittedToken?.id,
+      tokenName: admittedToken?.name,
+    );
+    _record(
+      'peer-attached',
+      peerId: peerId,
+      address: clientAddress,
+      tokenId: admittedToken?.id,
+      tokenName: admittedToken?.name,
+    );
     DataBroker.attachRemotePeer(peerId, (Map<String, Object?> message) {
       try {
         socket.add(jsonEncode(message));
@@ -266,6 +301,65 @@ class RemoteBrokerServer {
   void _detach(String peerId) {
     _peers.remove(peerId);
     DataBroker.detachRemotePeer(peerId);
+    final info = _peerAudit.remove(peerId);
+    if (info != null) {
+      _record(
+        'peer-detached',
+        peerId: peerId,
+        address: info.address,
+        tokenId: info.tokenId,
+        tokenName: info.tokenName,
+      );
+    }
+  }
+
+  /// Resolves the address to record for [request], honouring
+  /// [trustForwardedFor] (audit only — never used to authorise).
+  String _resolveAddress(HttpRequest request) {
+    final peer = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+    return RemoteClientAddress.resolve(
+      peerAddress: peer,
+      forwardedFor:
+          request.headers.value(RemoteClientAddress.forwardedForHeader),
+      trustForwardedFor: trustForwardedFor,
+    );
+  }
+
+  /// Records one audit line, if auditing is enabled.
+  void _record(
+    String action, {
+    String? peerId,
+    required String address,
+    String? tokenId,
+    String? tokenName,
+    Map<String, Object?>? extra,
+  }) {
+    final log = auditLog;
+    if (log == null) return;
+    log.record(RemoteAuditEntry(
+      at: DateTime.now(),
+      action: action,
+      peerId: peerId,
+      tokenId: tokenId,
+      tokenName: tokenName,
+      detail: <String, Object?>{
+        'address': address,
+        ...?extra,
+      },
+    ));
+  }
+
+  /// Finds the live token behind an `Authorization` header, for audit naming.
+  RemoteToken? _findActiveToken(String? header) {
+    final store = tokenStore;
+    if (store == null || header == null) return null;
+    const prefix = 'Bearer ';
+    if (header.length <= prefix.length) return null;
+    final presented = header.substring(prefix.length).trim();
+    for (final token in store.tokens) {
+      if (token.isActive && token.secret == presented) return token;
+    }
+    return null;
   }
 
   void _onPeerMessage(String peerId, dynamic data) {
@@ -338,4 +432,20 @@ class RemoteBrokerServer {
       // Peer vanished mid-send.
     }
   }
+}
+
+/// The facts about an attached peer that a later audit line needs.
+///
+/// Kept per peer id because the detach event arrives with nothing but the id,
+/// and a detach line that cannot name who left is not worth writing.
+class _PeerAuditInfo {
+  const _PeerAuditInfo({
+    required this.address,
+    this.tokenId,
+    this.tokenName,
+  });
+
+  final String address;
+  final String? tokenId;
+  final String? tokenName;
 }
