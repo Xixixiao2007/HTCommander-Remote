@@ -83,6 +83,31 @@ class RemoteControlService {
   /// Whether the transmit trigger is currently held.
   bool get isTransmitHeld => _transmitHeld;
 
+  /// Whether this client currently holds transmit authority.
+  bool get isOperator => _client?.isOperator ?? false;
+
+  /// Who holds transmit authority on the host, as far as this client knows.
+  String? get operatorHolderId => _client?.operatorHolderId;
+
+  /// Asks the host for transmit authority (client role only).
+  ///
+  /// Decision D5 has no pre-emption: the host grants authority only when nobody
+  /// else holds it. Asking is not holding -- [isOperator] stays false until the
+  /// host says otherwise.
+  void acquireOperator() {
+    if (config.role != RemoteAppRole.client) return;
+    _client?.acquireOperator();
+  }
+
+  /// Gives transmit authority back (client role only).
+  void releaseOperator() {
+    if (config.role != RemoteAppRole.client) return;
+    _client?.releaseOperator();
+    // Releasing authority must also close the microphone: leaving a held
+    // trigger open with nothing allowed through is a hot mic waiting to happen.
+    if (_transmitHeld) unawaited(setTransmitHeld(false));
+  }
+
   /// Presses or releases transmit (decision A: press-to-talk).
   ///
   /// The gesture lives in the UI; this is the primitive it drives. Both gates
