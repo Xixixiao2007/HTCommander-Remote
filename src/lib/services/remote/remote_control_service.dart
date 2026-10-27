@@ -26,11 +26,14 @@ import 'remote_audio_sink.dart';
 import 'remote_audit.dart';
 import 'remote_broker_client.dart';
 import 'remote_broker_server.dart';
+import 'remote_mic_sender.dart';
+import 'remote_mic_source.dart';
 import 'remote_operator_lock.dart';
 import 'remote_role.dart';
 import 'remote_token_store.dart';
 import 'remote_tx_injector.dart';
 import 'remote_tx_target.dart';
+import 'remote_uplink.dart';
 
 /// Owns the server/client lifecycle for one role config.
 class RemoteControlService {
@@ -40,6 +43,7 @@ class RemoteControlService {
     this.auditLog,
     this.audioSinkFactory,
     this.tokenStore,
+    this.micSourceFactory,
   });
 
   /// What to run. Read once at startup; a role change is applied by rebuilding
@@ -66,6 +70,79 @@ class RemoteControlService {
   /// Injectable so tests never touch the platform secret store. Production
   /// leaves it null and the default store (SecretStore-backed) is used.
   final RemoteTokenStore? tokenStore;
+
+  /// Builds the client's microphone source; null where capture is unavailable.
+  ///
+  /// Injectable so tests are deterministic and do not touch the recorder.
+  final RemoteMicSource Function()? micSourceFactory;
+
+  bool _transmitHeld = false;
+  RemoteUplink? _uplink;
+  RemoteMicSource? _mic;
+
+  /// Whether the transmit trigger is currently held.
+  bool get isTransmitHeld => _transmitHeld;
+
+  /// Presses or releases transmit (decision A: press-to-talk).
+  ///
+  /// The gesture lives in the UI; this is the primitive it drives. Both gates
+  /// apply underneath and cannot be bypassed by a caller: the trigger must be
+  /// held AND the client must hold operator authority, re-checked per block.
+  ///
+  /// Pressing without authority opens no microphone at all and publishes the
+  /// reason, rather than appearing to work.
+  Future<void> setTransmitHeld(bool held) async {
+    final client = _client;
+    if (_client == null || client == null) return;
+    if (config.role != RemoteAppRole.client) return;
+
+    if (!held) {
+      _transmitHeld = false;
+      await _releaseUplink();
+      return;
+    }
+
+    if (!client.isOperator) {
+      _transmitHeld = false;
+      _publishRefusal('not-operator');
+      return;
+    }
+
+    _transmitHeld = true;
+    final factory = micSourceFactory;
+    if (factory == null) {
+      // Capture is not available here; nothing to open.
+      _transmitHeld = false;
+      return;
+    }
+
+    final mic = _mic ??= factory();
+    if (!await mic.start()) {
+      _transmitHeld = false;
+      return;
+    }
+
+    final uplink = _uplink ??= RemoteUplink(
+      sender: RemoteMicSender(
+        send: (Int16List pcm, int rate) =>
+            client.sendAudio(pcm, sampleRate: rate),
+        targetSampleRate: 32000,
+      ),
+      inputRate: mic.sampleRate,
+      // Re-checked per block: authority can be revoked mid-sentence and the
+      // operator must stop immediately, not at the next connect.
+      isAllowed: () => _transmitHeld && (_client?.isOperator ?? false),
+    );
+    uplink.listen(mic.blocks);
+  }
+
+  /// Closes the microphone and detaches the uplink.
+  Future<void> _releaseUplink() async {
+    _uplink?.stop();
+    final mic = _mic;
+    _mic = null;
+    if (mic != null) await mic.stop();
+  }
 
   /// Rate the playback device is opened at. A host passes the radio rate
   /// through unchanged by default, so this matches the wire.
@@ -304,8 +381,15 @@ class RemoteControlService {
 
         // Mirror the host's operator state into the app's event namespace, and
         // surface refusals so a UI can explain why an action did nothing.
-        client.onOperatorChanged = (String? holderId) =>
-            _publishOperator(holderId, selfIsOperator: client.isOperator);
+        client.onOperatorChanged = (String? holderId) {
+          _publishOperator(holderId, selfIsOperator: client.isOperator);
+          // Authority can end while the trigger is held: the host releases it,
+          // or the idle timeout fires. Close the microphone instead of leaving
+          // it open with nothing allowed through.
+          if (!client.isOperator && _transmitHeld) {
+            unawaited(setTransmitHeld(false));
+          }
+        };
         client.onRefused = (String name, String reason) =>
             _publishRefusal(reason);
 
@@ -332,6 +416,11 @@ class RemoteControlService {
 
   /// Tears everything down. Safe to call when nothing is running.
   Future<void> stop() async {
+    // Close the microphone before anything else: a held trigger must not
+    // outlive the session.
+    _transmitHeld = false;
+    await _releaseUplink();
+
     // Release any keyed radio before tearing the server down: an injector still
     // holding a stream would leave the transmitter on after the session ends.
     await _disposeInjectors();
