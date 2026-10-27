@@ -16,6 +16,37 @@ setting, not a separate program.
 
 ---
 
+## Before you forward the port
+
+This feature makes a radio transmittable over a network. Two things follow, and
+neither is a technical detail the software can settle for you.
+
+**Transmitting remains your responsibility.** Remote control does not move it:
+it stays with the licensed operator, whoever is physically at the machine.
+Handing a token to somebody without an operator certificate means your licence
+does the transmitting. Whether remote transmitting is allowed where you are —
+and under what conditions — is set by your jurisdiction's rules, not by this
+project. Documentation here, including this file, is **not legal advice**.
+
+**Exposing the port puts transmit capability on the network.** The host listens
+on loopback only until you say otherwise. Once it is reachable from elsewhere,
+anyone holding a valid token can transmit on your radio. Hence, concretely:
+
+- terminate TLS in a reverse proxy and keep the application off the public
+  internet directly;
+- issue one token per device and revoke the ones you stop using — revocation
+  disconnects one device, not the station;
+- read the audit trail: it records attach, rejected attach, refused writes and
+  every transmission, with the token name and client address, and that is the
+  only evidence you will have afterwards.
+
+The controls described below — mandatory token authentication, the
+single-operator lock, the audit trail, LAN access off by default — are what the
+software can do. They reduce the chance of an accident; they do not make remote
+operation compliant, and they cannot tell you whether it is permitted.
+
+---
+
 ## Configuration
 
 Settings → **Remote Control** → choose a role → **Apply**.

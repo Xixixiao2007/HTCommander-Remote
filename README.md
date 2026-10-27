@@ -41,6 +41,61 @@ Two defaults worth knowing before you try it:
 
 ---
 
+## ⚠️ Legal and compliance risk of network forwarding
+
+**Read this before forwarding any port.**
+
+### Responsibility for transmitting does not travel with the connection
+
+Transmitting with this software assumes you hold a valid operator certificate and
+station authorisation **where you are**. The requirements differ by jurisdiction
+and are outside the scope of this document — check them yourself.
+
+Remote control does not change who is responsible: that stays with the licensed
+operator, regardless of who is physically sitting at the machine. So:
+
+- Handing a token to someone without an operator certificate means **your**
+  licence does the transmitting.
+- Transmitting through someone else's host is still governed by your own
+  jurisdiction's rules.
+- Remote operation routinely means "nobody is at the station", and that
+  situation carries extra conditions in many places.
+
+**Whether remote transmitting is permitted, and to what extent, is decided by the
+rules where you are — not by this project.** This document is **not legal
+advice**, and neither is the rest of the project's documentation.
+
+### Exposing the port puts transmit capability on the network
+
+By default the host listens on loopback only. The moment you enable LAN access,
+or forward the port through a reverse proxy to the internet, the situation
+changes: **anyone holding a valid token can transmit on your radio.**
+
+Concretely:
+
+- **Do not expose the port directly to the internet.** Terminate TLS in a
+  reverse proxy (Caddy, nginx, Cloudflare Tunnel, …) and keep the application
+  on the internal network.
+- **Issue one token per device and revoke what you stop using.** A leaked token
+  is disconnected individually, without disturbing the others.
+- **Read the audit trail.** The host records every attach, every rejected
+  attach, every refused write, and every transmission, with the token name and
+  the client address. That is your evidence after the fact.
+
+### What the software does and does not give you
+
+| Provided | Not provided |
+| --- | --- |
+| Mandatory token authentication, on by default for a host | **Any compliance guarantee** |
+| Single-operator lock: only the holder can transmit | A judgement on whether you may transmit remotely at all |
+| Full audit trail (attach, reject, write, transmit) | Automatic limits on regulated bands or power |
+| LAN access off by default | Encryption of the hop (TLS is the proxy's job) |
+
+Compliance is between you and your regulator. The software can only record who
+did what.
+
+---
+
 ## Getting a build
 
 **There are no pre-built binaries for this fork.** The upstream installers do
