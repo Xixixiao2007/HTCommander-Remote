@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../services/remote/remote_role.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -98,6 +100,23 @@ class _SettingsDialogState extends State<SettingsDialog>
   late TextEditingController _aprsIsPasscodeController;
   late TextEditingController _aprsFiApiKeyController;
   late TextEditingController _repeaterBookTokenController;
+
+  // Remote-control role (spec D4/D8). These live in the broker's device-0 store
+  // rather than in _settings, because the role has to be readable at startup
+  // before the settings model exists.
+  late TextEditingController _remoteHostUrlController;
+  late TextEditingController _remotePortController;
+  late TextEditingController _remoteClientTokenController;
+
+  /// Current role shown in the dropdown.
+  RemoteAppRole _remoteRole = RemoteAppRole.standalone;
+
+  /// Result line under the Apply button.
+  String _remoteStatus = '';
+
+  /// Whether a client token is already stored. The token itself is never put
+  /// back into a text field: the field is write-only.
+  bool _remoteHasToken = false;
   late TextEditingController _webPortController;
   late TextEditingController _agwpePortController;
   late TextEditingController _airplaneUrlController;
@@ -336,6 +355,15 @@ class _SettingsDialogState extends State<SettingsDialog>
     _repeaterBookTokenController = TextEditingController(
       text: _settings.repeaterBookToken,
     );
+    final remoteConfig = RemoteRoleStore.load();
+    _remoteRole = remoteConfig.role;
+    _remoteHostUrlController = TextEditingController(text: remoteConfig.hostUrl);
+    _remotePortController = TextEditingController(
+      text: remoteConfig.port == 0 ? '' : remoteConfig.port.toString(),
+    );
+    _remoteClientTokenController = TextEditingController();
+    _loadRemoteTokenState();
+
     _webPortController = TextEditingController(
       text: _settings.webServerPort.toString(),
     );
@@ -423,6 +451,9 @@ class _SettingsDialogState extends State<SettingsDialog>
     _aprsIsPasscodeController.dispose();
     _aprsFiApiKeyController.dispose();
     _repeaterBookTokenController.dispose();
+    _remoteHostUrlController.dispose();
+    _remotePortController.dispose();
+    _remoteClientTokenController.dispose();
     _webPortController.dispose();
     _agwpePortController.dispose();
     _airplaneUrlController.dispose();
@@ -1071,6 +1102,154 @@ class _SettingsDialogState extends State<SettingsDialog>
   }
 
   // Bold section title style (theme-aware for light/dark).
+  /// Reads whether a client token is already stored, so the field can say so
+  /// without ever round-tripping the secret into the UI.
+  Future<void> _loadRemoteTokenState() async {
+    final token = await RemoteRoleStore.loadClientToken();
+    if (!mounted) return;
+    setState(() => _remoteHasToken = token != null && token.isNotEmpty);
+  }
+
+  /// Saves the remote role config and reports whether a restart is needed.
+  Future<void> _applyRemoteControl() async {
+    final portText = _remotePortController.text.trim();
+    final config = RemoteRoleConfig(
+      role: _remoteRole,
+      hostUrl: _remoteHostUrlController.text.trim(),
+      port: portText.isEmpty ? 0 : (int.tryParse(portText) ?? -1),
+    );
+
+    final problems = config.validate();
+    if (problems.isNotEmpty) {
+      setState(() => _remoteStatus = problems.first);
+      return;
+    }
+
+    // Read the previous value first: only a role change needs a relaunch (D8).
+    final previous = RemoteRoleStore.load();
+    RemoteRoleStore.save(config);
+
+    final newToken = _remoteClientTokenController.text.trim();
+    if (newToken.isNotEmpty) {
+      await RemoteRoleStore.saveClientToken(newToken);
+      _remoteClientTokenController.clear();
+      await _loadRemoteTokenState();
+    }
+    if (!mounted) return;
+    setState(() {
+      _remoteStatus = config.requiresRestartComparedTo(previous)
+          ? 'Saved. Restart HTCommander to apply the new role.'
+          : 'Saved.';
+    });
+  }
+
+  /// The Remote Control settings section.
+  ///
+  /// Strings are hardcoded English, matching the neighbouring RepeaterBook and
+  /// Features sections; the l10n pass over this dialog is incomplete upstream.
+  Widget _buildRemoteControlSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Remote Control', style: _sectionTitleStyle()),
+        const SizedBox(height: 8),
+        const Text(
+          'Let another device operate this station over the network. Host '
+          'serves clients from this computer; Client attaches this app to a '
+          'host that owns the radio.',
+          style: DialogStyles.bodyStyle,
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<RemoteAppRole>(
+          initialValue: _remoteRole,
+          // Required: without it the closed button lays out every item via an
+          // IndexedStack and sizes to the widest label, which overflows the
+          // dialog (regression caught by settings_dialog_windows_test).
+          isExpanded: true,
+          decoration: _inputDecoration(),
+          items: const [
+            DropdownMenuItem(
+              value: RemoteAppRole.standalone,
+              child: Text('Off'),
+            ),
+            DropdownMenuItem(
+              value: RemoteAppRole.host,
+              child: Text('Host (serve remote clients)'),
+            ),
+            DropdownMenuItem(
+              value: RemoteAppRole.client,
+              child: Text('Client (attach to a host)'),
+            ),
+          ],
+          onChanged: (value) => setState(() {
+            _remoteRole = value ?? RemoteAppRole.standalone;
+            _remoteStatus = '';
+          }),
+        ),
+        if (_remoteRole == RemoteAppRole.host) ...[
+          const SizedBox(height: 12),
+          const Text('Listen port (leave blank for any free port)',
+              style: DialogStyles.labelStyle),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _remotePortController,
+            keyboardType: TextInputType.number,
+            decoration: _inputDecoration(hintText: '8123'),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Clients must reach this port. For access from outside your '
+            'network, put a TLS reverse proxy in front of it and forward to '
+            'this port.',
+            style: DialogStyles.bodyStyle,
+          ),
+        ],
+        if (_remoteRole == RemoteAppRole.client) ...[
+          const SizedBox(height: 12),
+          const Text('Host address', style: DialogStyles.labelStyle),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _remoteHostUrlController,
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: _inputDecoration(
+              hintText: 'wss://your-host.example.org/remote',
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text('Access token', style: DialogStyles.labelStyle),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _remoteClientTokenController,
+            obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            decoration: _inputDecoration(
+              hintText: _remoteHasToken
+                  ? 'A token is stored. Paste a new one to replace it.'
+                  : 'Paste the token issued by the host',
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            ElevatedButton(
+              onPressed: _applyRemoteControl,
+              child: const Text('Apply'),
+            ),
+            if (_remoteStatus.isNotEmpty) ...[
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(_remoteStatus, style: DialogStyles.bodyStyle),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
   TextStyle _sectionTitleStyle() {
     return TextStyle(
       fontWeight: FontWeight.bold,
@@ -2842,6 +3021,8 @@ class _SettingsDialogState extends State<SettingsDialog>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _buildRemoteControlSection(),
+          const SizedBox(height: 24),
           Text('RepeaterBook', style: _sectionTitleStyle()),
           const SizedBox(height: 8),
           const Text(
