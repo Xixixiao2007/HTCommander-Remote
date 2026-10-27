@@ -26,8 +26,21 @@ does not.
 | Role | Fields | What happens |
 | --- | --- | --- |
 | Off | — | Nothing. Default. |
-| Host | Listen port (blank = any free port) | Serves `/remote` on that port for authenticated clients |
+| Host | Listen port, *Accept connections from other devices*, *Stream audio to clients*, Audio quality, *Trust X-Forwarded-For*, Access tokens | Serves `/remote` on that port for authenticated clients |
 | Client | Host address (`ws://` or `wss://`), access token | Attaches to that host and mirrors its state |
+
+### Two defaults that will surprise you
+
+**The host listens on 127.0.0.1 only.** A client on another machine cannot
+connect until you tick *Accept connections from other devices on the network*.
+That is deliberate — exposing a radio's control port to a whole LAN should be a
+choice you make, not something that happens the first time you pick "Host".
+
+**The host requires a token before any client may attach**, and until you
+generate one, nobody can. Issue the first token under **Access tokens** in the
+same section: name the device, press *Generate token*, and copy the secret
+immediately — it is shown **once** and cannot be recovered. Revoking a token
+disconnects only that device.
 
 The **token is held in the platform secret store**, not in the settings file,
 and the field is write-only: it is never read back into the UI.
@@ -128,17 +141,26 @@ Working:
 
 - Host and client roles, role-driven startup, settings UI
 - Broker state mirroring in both directions
-- Token authentication with per-device revocation
-- Single-operator lock, enforced on transmit, settings, channel and region writes
-- Two-way audio: host playback → client speaker; client microphone → 32 kHz frames
-- Audit trail, persisted when a database is available
-- Configurable bind address and audit-only `X-Forwarded-For`
+- Token authentication, always required for a host, with per-device revocation
+  and a UI to issue and revoke them
+- Single-operator lock, enforced on transmit, settings, channel and region
+  writes, with the holder published so any tab can display it
+- Two-way audio: host playback → client speaker, at a selectable 32 / 16 / 8 kHz
+  tier; audio streaming is a switch you can turn off for a control-only session
+- The client uplink is gated on holding operator authority, so a hot microphone
+  cannot transmit on someone else's authority
+- Audit trail recording attach, rejected attach, detach, refused writes, and
+  transmissions (one entry per burst, not per frame), persisted when a database
+  is available
+- Loopback by default with an explicit LAN opt-in, and audit-only
+  `X-Forwarded-For`
 
 Not yet wired:
 
 - The OS microphone capture device and injecting received audio into the host's
-  transmit chain (the wire seam and rate conversion are done and tested)
-- A UI for issuing and revoking tokens (the store and enforcement are done)
+  transmit chain. The wire seam, rate conversion, transmit-authority gate and
+  the stall watchdog are done and tested; what is missing is the capture device
+  on the client and the choice of which radio to key on the host.
 
 ---
 
@@ -149,5 +171,5 @@ flutter analyze
 flutter test
 ```
 
-The remote-control code is covered by 13 test files (~80 tests) alongside the
-existing suite.
+The remote-control code is covered by 17 test files (~90 tests) alongside the
+existing suite, which is 628 tests in total.
