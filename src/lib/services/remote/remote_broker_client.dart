@@ -269,6 +269,14 @@ class RemoteBrokerClient {
         if (you is String) _selfPeerId = you;
         onOperatorChanged?.call(_operatorHolderId);
         break;
+      case 'operator-granted':
+        // Explicit acknowledgement that the request succeeded. Covered by the
+        // 'operator' broadcast too, but a distinct frame lets a client tell
+        // "granted" apart from "my request never arrived" -- which is exactly
+        // the ambiguity that left a real device stuck on "not-operator".
+        _operatorHolderId = message['holderId'] as String? ?? _selfPeerId;
+        onOperatorChanged?.call(_operatorHolderId);
+        break;
       default:
         break;
     }

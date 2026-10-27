@@ -104,6 +104,13 @@ class RemoteBrokerServer {
   void Function(Int16List pcm, int sampleRate, int channels)? _audioTap;
   bool _tapRegistered = false;
 
+  /// Periodic sweep that lets an idle operator lock expire.
+  ///
+  /// The lock has an idleTimeout, but expiry only happens when somebody calls
+  /// expireIfIdle(); without a sweep the timeout was decorative and a holder
+  /// that went quiet kept the station for good.
+  Timer? _operatorSweep;
+
   /// Receives microphone audio sent by a peer (uplink, T5).
   ///
   /// Audio inbound on a peer's socket is always uplink, and audio outbound is
@@ -223,6 +230,16 @@ class RemoteBrokerServer {
       final lock = operatorLock;
       if (lock != null) {
         lock.onHolderChanged = _broadcastOperator;
+        // Actually run the idle expiry. RemoteOperatorLock.expireIfIdle() has
+        // always existed but nothing ever called it, so a holder that stopped
+        // being active never lost the lock -- and since D5 has no pre-emption,
+        // that left the station locked out until the holder disconnected.
+        // A periodic sweep is what makes the lock's own idleTimeout mean
+        // anything at all.
+        _operatorSweep?.cancel();
+        _operatorSweep = Timer.periodic(const Duration(seconds: 5), (Timer _) {
+          lock.expireIfIdle();
+        });
       }
       if (forwardHostAudio && !_tapRegistered) {
         _audioTap ??= (Int16List pcm, int rate, int channels) {
@@ -241,6 +258,8 @@ class RemoteBrokerServer {
   /// Stops listening and detaches every peer.
   void stop() {
     operatorLock?.onHolderChanged = null;
+    _operatorSweep?.cancel();
+    _operatorSweep = null;
     if (_tapRegistered) {
       final tap = _audioTap;
       if (tap != null) PcmPlayer.removePlaybackTap(tap);
@@ -524,7 +543,33 @@ class RemoteBrokerServer {
         }
         break;
       case 'operator-acquire':
-        operatorLock?.acquire(peerId);
+        // The result used to be discarded, and a refusal produced no reply at
+        // all: the client sat on a stale "not-operator" with no way to learn
+        // why. Say what happened, in both directions.
+        final acquireLock = operatorLock;
+        if (acquireLock == null) {
+          sendRefused(peerId, 'operator', 'no-operator-lock');
+          break;
+        }
+        final acquired = acquireLock.acquire(peerId);
+        if (acquired) {
+          // onHolderChanged already broadcast the new holder to everyone,
+          // including this peer. Acknowledge explicitly so a client can tell
+          // "granted" from "my request was lost".
+          _sendTo(peerId, <String, Object?>{
+            'm': 'operator-granted',
+            'holderId': peerId,
+          });
+        } else {
+          // D5 has no pre-emption: somebody else holds it. Name them, so the
+          // UI can say who instead of a bare "not-operator" that never changes.
+          sendRefused(peerId, 'operator', 'held-by-other');
+          _sendTo(peerId, <String, Object?>{
+            'm': 'operator',
+            'holderId': acquireLock.holderId,
+            'you': peerId,
+          });
+        }
         break;
       case 'operator-release':
         operatorLock?.release(peerId);
