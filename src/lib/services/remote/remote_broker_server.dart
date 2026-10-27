@@ -44,6 +44,7 @@ import 'remote_audio.dart';
 import 'remote_audio_resample.dart';
 import 'remote_client_address.dart';
 import 'remote_operator_lock.dart';
+import 'remote_privileged.dart';
 import 'remote_token_store.dart';
 
 /// Serves the DataBroker protocol to remote HTCommander clients over WebSocket.
@@ -423,6 +424,35 @@ class RemoteBrokerServer {
         final deviceId = message['deviceId'];
         final name = message['name'];
         if (deviceId is! int || name is! String) return;
+        // Q11 option C: settings, channel and region writes need the operator.
+        // Refuse BEFORE the broker sees it, and tell the sender why, so a client
+        // can show "not the operator" instead of appearing to work and doing
+        // nothing.
+        final dispatchLock = operatorLock;
+        if (dispatchLock != null &&
+            !dispatchLock.isOperator(peerId) &&
+            RemotePrivileged.isGated(deviceId, name)) {
+          _sendTo(peerId, <String, Object?>{
+            'm': 'refused',
+            'deviceId': deviceId,
+            'name': name,
+            'reason': 'not-operator',
+          });
+          final info = _peerAudit[peerId];
+          _record(
+            'dispatch-refused',
+            peerId: peerId,
+            address: info?.address ?? 'unknown',
+            tokenId: info?.tokenId,
+            tokenName: info?.tokenName,
+            extra: <String, Object?>{
+              'deviceId': deviceId,
+              'name': name,
+              'reason': 'not-operator',
+            },
+          );
+          break;
+        }
         final payload = message['payload'];
         DataBroker.applyRemoteDispatch(
           from: peerId,
