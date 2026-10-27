@@ -81,6 +81,9 @@ import 'services/host_bridge.dart';
 import 'services/crash_logger.dart';
 import 'services/data_broker.dart';
 import 'services/db/app_database.dart';
+import 'services/remote/remote_audit.dart';
+import 'services/remote/remote_control_service.dart';
+import 'services/remote/remote_role.dart';
 import 'services/settings_migration.dart';
 import 'services/data_broker_client.dart';
 import 'services/data_broker_serializers.dart';
@@ -294,6 +297,13 @@ class _ReadableErrorWidget extends StatelessWidget {
 }
 
 /// Application entry point, executed inside the guarded zone set up by [main].
+/// The remote-control role service, when this install is a host or a client.
+///
+/// Held at top level because [_startApp] is a top-level function and the
+/// service must outlive the startup sequence. Null in standalone mode, which
+/// is the historical behaviour.
+RemoteControlService? _remoteControl;
+
 Future<void> _startApp(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -631,6 +641,39 @@ Future<void> _startApp(List<String> args) async {
     final homeAssistantHandler = HomeAssistantHandler();
     homeAssistantHandler.init();
     DataBroker.addDataHandler('HomeAssistantHandler', homeAssistantHandler);
+  }
+
+  // Apply this install's remote-control role (spec D4/D8). Standalone is the
+  // default and a no-op, so nothing changes for anyone who never touches the
+  // setting. Host mode serves `/remote`; client mode attaches to one.
+  //
+  // Skipped on web (no dart:io sockets) and on the hosted web build, where the
+  // desktop host already owns the radio and the browser is only a UI.
+  if (!kIsWeb && !HostBridge.isHosted) {
+    final roleConfig = RemoteRoleStore.load();
+    if (roleConfig.role != RemoteAppRole.standalone) {
+      final audit = RemoteAuditLog();
+      // Persist the host's audit trail when the database is available. A
+      // missing database costs us the record, not the function.
+      final db = AppDatabase.instance;
+      if (roleConfig.role == RemoteAppRole.host && db != null) {
+        db.remoteAudit.attach(audit);
+      }
+      _remoteControl = RemoteControlService(
+        config: roleConfig,
+        token: roleConfig.role == RemoteAppRole.client
+            ? await RemoteRoleStore.loadClientToken()
+            : null,
+        auditLog: roleConfig.role == RemoteAppRole.host ? audit : null,
+      );
+      if (!await _remoteControl!.start()) {
+        // Settings-driven, so the reason has to be visible in the log until the
+        // settings screen (T3b-c) can show it inline.
+        debugPrint('RemoteControl: ${_remoteControl!.errors.join(' ')}');
+      } else {
+        debugPrint('RemoteControl: running as ${roleConfig.role.name}');
+      }
+    }
   }
 
   // Mirror the preferred radio's channel list and incoming APRS messages to the

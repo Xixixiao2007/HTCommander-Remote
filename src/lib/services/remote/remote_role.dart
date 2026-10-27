@@ -17,6 +17,7 @@ RemoteTokenStore).
 */
 
 import '../data_broker.dart';
+import '../secret_store.dart';
 
 /// What this install is.
 enum RemoteAppRole {
@@ -140,4 +141,20 @@ class RemoteRoleStore {
       store: true,
     );
   }
+
+  /// SecretStore name for the bearer token THIS install presents as a client.
+  ///
+  /// Deliberately distinct from [RemoteTokenStore], which holds the tokens a
+  /// host has issued: a machine can be a client of one host and a host for
+  /// others, and the two must not overwrite each other. It is a secret, so it
+  /// lives in SecretStore rather than in the device-0 settings above.
+  static const String clientTokenName = 'RemoteClientToken';
+
+  /// Reads the client token, or null when none has been entered.
+  static Future<String?> loadClientToken() =>
+      SecretStore.instance.read(clientTokenName);
+
+  /// Stores the client token; an empty value clears it.
+  static Future<void> saveClientToken(String? token) =>
+      SecretStore.instance.write(clientTokenName, token);
 }

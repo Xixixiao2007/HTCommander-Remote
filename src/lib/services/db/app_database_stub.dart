@@ -43,6 +43,9 @@ class AppDatabase {
   /// No database on web.
   dynamic get meshcore => null;
 
+  /// No database on web; remote-control auditing is skipped there.
+  dynamic get remoteAudit => null;
+
   /// No-op on web.
   static Future<void> open() async {}
 
