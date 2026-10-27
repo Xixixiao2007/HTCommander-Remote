@@ -31,6 +31,7 @@ class RemoteUplink {
   RemoteUplink({
     required this.sender,
     required this.inputRate,
+    required this.isAllowed,
   });
 
   /// Converts the capture rate and hands blocks to the socket.
@@ -38,6 +39,17 @@ class RemoteUplink {
 
   /// Sample rate the capture device delivers, e.g. 48000.
   final int inputRate;
+
+  /// Whether this client may transmit right now.
+  ///
+  /// Required rather than defaulted on purpose: decision D5 says only the
+  /// operator may transmit, and a hot microphone is not the same thing as
+  /// authority. Making every caller state the policy is what stops "we forgot
+  /// to check" from being a silent hot mic.
+  ///
+  /// Consulted per block, not once at listen time, so revoking authority takes
+  /// effect immediately instead of at the next reconnect.
+  final bool Function() isAllowed;
 
   StreamSubscription<Int16List>? _subscription;
 
@@ -51,7 +63,12 @@ class RemoteUplink {
   void listen(Stream<Int16List> captured) {
     if (_subscription != null) return;
     _subscription = captured.listen(
-      (Int16List pcm) => sender.addPcm(pcm, inputRate: inputRate),
+      (Int16List pcm) {
+        // Checked per block: authority can be granted or revoked mid-session,
+        // and a released operator must stop transmitting immediately.
+        if (!isAllowed()) return;
+        sender.addPcm(pcm, inputRate: inputRate);
+      },
       // A capture error (device unplugged, driver hiccup) must not end the
       // subscription: the operator would go silent for the rest of the session
       // with no way to recover except reconnecting.

@@ -45,6 +45,7 @@ void main() {
         targetSampleRate: 32000,
       ),
       inputRate: 48000,
+      isAllowed: () => true,
     );
   });
 
@@ -94,5 +95,58 @@ void main() {
     capture.add(_samples(960));
     await Future<void>.delayed(Duration.zero);
     expect(sent.length, 1);
+  });
+
+  test('AC-T5f.1 without transmit authority nothing is forwarded', () async {
+    var allowed = false;
+    uplink = RemoteUplink(
+      sender: RemoteMicSender(
+        send: (Int16List pcm, int rate) {
+          sent.add(pcm);
+          sentRates.add(rate);
+        },
+        targetSampleRate: 32000,
+      ),
+      inputRate: 48000,
+      isAllowed: () => allowed,
+    );
+
+    uplink.listen(capture.stream);
+    capture.add(_samples(960));
+    await Future<void>.delayed(Duration.zero);
+    expect(sent, isEmpty,
+        reason: 'D5: only the operator may transmit; a hot mic is not enough');
+  });
+
+  test('AC-T5f.2 authority is re-checked for every block', () async {
+    var allowed = false;
+    uplink = RemoteUplink(
+      sender: RemoteMicSender(
+        send: (Int16List pcm, int rate) {
+          sent.add(pcm);
+          sentRates.add(rate);
+        },
+        targetSampleRate: 32000,
+      ),
+      inputRate: 48000,
+      isAllowed: () => allowed,
+    );
+
+    uplink.listen(capture.stream);
+    capture.add(_samples(960));
+    await Future<void>.delayed(Duration.zero);
+    expect(sent, isEmpty);
+
+    // Authority granted, then revoked: the check must not be cached from listen
+    // time, or a released operator would keep transmitting.
+    allowed = true;
+    capture.add(_samples(960));
+    await Future<void>.delayed(Duration.zero);
+    expect(sent.length, 1);
+
+    allowed = false;
+    capture.add(_samples(960));
+    await Future<void>.delayed(Duration.zero);
+    expect(sent.length, 1, reason: 'revoked authority was ignored');
   });
 }
