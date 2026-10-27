@@ -15,6 +15,11 @@ so a failure has to be displayable. `start()` returning false quietly would
 leave the user staring at an unchanged app with no idea why.
 */
 
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'remote_audio_player.dart';
+import 'remote_audio_sink.dart';
 import 'remote_audit.dart';
 import 'remote_broker_client.dart';
 import 'remote_broker_server.dart';
@@ -26,6 +31,7 @@ class RemoteControlService {
     required this.config,
     this.token,
     this.auditLog,
+    this.audioSinkFactory,
   });
 
   /// What to run. Read once at startup; a role change is applied by rebuilding
@@ -39,6 +45,26 @@ class RemoteControlService {
 
   /// Optional audit trail (attach a database-backed DAO in the host role).
   final RemoteAuditLog? auditLog;
+
+  /// Opens a playback device for received audio (client role).
+  ///
+  /// Null means control-only: the client still attaches and mirrors broker
+  /// state, it just does not play the host's audio. Injected so the service
+  /// stays testable -- PcmPlayer needs a platform audio channel.
+  final RemoteAudioSinkFactory? audioSinkFactory;
+
+  /// Rate the playback device is opened at. A host passes the radio rate
+  /// through unchanged by default, so this matches the wire.
+  static const int playbackSampleRate = 32000;
+
+  RemoteAudioSink? _audioSink;
+  RemoteAudioPlayer? _audioPlayer;
+
+  /// The playback sink, when received audio is being played.
+  RemoteAudioSink? get audioSink => _audioSink;
+
+  /// The block player feeding that sink, when audio is being played.
+  RemoteAudioPlayer? get audioPlayer => _audioPlayer;
 
   RemoteBrokerServer? _server;
   RemoteBrokerClient? _client;
@@ -106,6 +132,22 @@ class RemoteControlService {
           return false;
         }
         _client = client;
+
+        // Play the host's audio when this install has a device for it. A
+        // missing speaker is not a connection failure, so a null sink is fine.
+        final factory = audioSinkFactory;
+        if (factory != null) {
+          final sink = await factory(playbackSampleRate);
+          if (sink != null) {
+            _audioSink = sink;
+            _audioPlayer = RemoteAudioPlayer(
+              frames: client.audioFrames,
+              sampleRate: playbackSampleRate,
+              feed: (Int16List pcm, int rate) => unawaited(sink.feed(pcm)),
+            );
+          }
+        }
+
         // Ask for the host's state so the UI has something to draw.
         await client.requestSnapshot();
         return true;
@@ -114,6 +156,16 @@ class RemoteControlService {
 
   /// Tears everything down. Safe to call when nothing is running.
   Future<void> stop() async {
+    // Stop feeding first, then release the device, so a block cannot land on a
+    // released sink.
+    final player = _audioPlayer;
+    _audioPlayer = null;
+    if (player != null) await player.dispose();
+
+    final sink = _audioSink;
+    _audioSink = null;
+    if (sink != null) await sink.close();
+
     final client = _client;
     _client = null;
     if (client != null) await client.close();

@@ -82,6 +82,7 @@ import 'services/crash_logger.dart';
 import 'services/data_broker.dart';
 import 'services/db/app_database.dart';
 import 'services/remote/remote_audit.dart';
+import 'services/remote/remote_audio_sink.dart';
 import 'services/remote/remote_control_service.dart';
 import 'services/remote/remote_role.dart';
 import 'services/settings_migration.dart';
@@ -665,6 +666,12 @@ Future<void> _startApp(List<String> args) async {
             ? await RemoteRoleStore.loadClientToken()
             : null,
         auditLog: roleConfig.role == RemoteAppRole.host ? audit : null,
+        // Only a client plays the host's audio; a host plays through its own
+        // radio path. Null on platforms without an audio device, which just
+        // means a control-only session.
+        audioSinkFactory: roleConfig.role == RemoteAppRole.client
+            ? PcmPlayerAudioSink.open
+            : null,
       );
       if (!await _remoteControl!.start()) {
         // Settings-driven, so the reason has to be visible in the log until the
