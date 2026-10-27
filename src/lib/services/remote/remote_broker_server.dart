@@ -96,6 +96,12 @@ class RemoteBrokerServer {
   void Function(Int16List pcm, int sampleRate, int channels)? _audioTap;
   bool _tapRegistered = false;
 
+  /// Receives microphone audio sent by a peer (uplink, T5).
+  ///
+  /// Audio inbound on a peer's socket is always uplink, and audio outbound is
+  /// always downlink, so no direction tagging is needed on the wire.
+  void Function(String peerId, RemoteAudioFrame frame)? onPeerAudio;
+
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
   int _nextPeerId = 1;
@@ -263,6 +269,21 @@ class RemoteBrokerServer {
   }
 
   void _onPeerMessage(String peerId, dynamic data) {
+    // Binary frames from a peer are microphone audio (uplink).
+    if (data is List<int>) {
+      final listener = onPeerAudio;
+      if (listener == null) return;
+      final frame = RemoteAudio.decode(
+        data is Uint8List ? data : Uint8List.fromList(data),
+      );
+      if (frame == null) return;
+      try {
+        listener(peerId, frame);
+      } catch (_) {
+        // A failing consumer must not take the socket down with it.
+      }
+      return;
+    }
     if (data is! String) return;
     Object? decoded;
     try {

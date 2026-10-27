@@ -97,6 +97,22 @@ class RemoteBrokerClient {
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
 
+  /// Sends microphone audio to the host (uplink, T5).
+  ///
+  /// [sampleRate] must be the rate the host's encoder expects — the radio's
+  /// 32 kHz — so any resampling from the capture device happens before this
+  /// call. Fire-and-forget, like downlink audio: a slow socket drops a frame
+  /// rather than stalling the capture path.
+  void sendAudio(Int16List pcm, {required int sampleRate, int channels = 1}) {
+    final socket = _socket;
+    if (socket == null || pcm.isEmpty) return;
+    try {
+      socket.add(RemoteAudio.encode(pcm, sampleRate, channels));
+    } catch (_) {
+      // Transport died; the close handler clears the role.
+    }
+  }
+
   /// Detaches from the host and restores standalone behaviour.
   Future<void> close() async {
     final socket = _socket;
