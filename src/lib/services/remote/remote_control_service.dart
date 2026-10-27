@@ -136,14 +136,20 @@ class RemoteControlService {
     _transmitHeld = true;
     final factory = micSourceFactory;
     if (factory == null) {
-      // Capture is not available here; nothing to open.
+      // Capture is not available here. Say so: returning silently made a client
+      // that could not transmit look identical to one that simply was not being
+      // heard, and cost a real debugging round.
       _transmitHeld = false;
+      _publishRefusal('no-microphone');
       return;
     }
 
     final mic = _mic ??= factory();
     if (!await mic.start()) {
+      // Opened nothing: usually a denied permission. Silent failure here would
+      // read as "transmitting but unheard".
       _transmitHeld = false;
+      _publishRefusal('microphone-unavailable');
       return;
     }
 
@@ -172,6 +178,33 @@ class RemoteControlService {
   /// Rate the playback device is opened at. A host passes the radio rate
   /// through unchanged by default, so this matches the wire.
   static const int playbackSampleRate = 32000;
+
+  /// Port a client assumes when its address names none.
+  ///
+  /// The host picks an ephemeral port unless the user sets one, so this is only
+  /// a convenience for the common case where someone typed just an address.
+  static const int defaultClientPort = 8080;
+
+  /// The address a client should actually dial for [raw].
+  ///
+  /// Two defaults are filled in, because leaving them to Uri.parse() produced
+  /// port 0: the request then went to whatever answered on port 80, which
+  /// replied HTTP 200 and surfaced as "was not upgraded to websocket" -- a
+  /// misleading message for what was really a missing port.
+  ///
+  /// A fully spelled-out URL is returned unchanged apart from a missing path.
+  static Uri _clientUri(String raw) {
+    final parsed = Uri.tryParse(raw);
+    if (parsed == null || parsed.host.isEmpty) {
+      // Let the client fail on the malformed input rather than inventing one.
+      return Uri.parse(raw);
+    }
+    final bool hasNoPort = !parsed.hasPort || parsed.port == 0;
+    return parsed.replace(
+      port: hasNoPort ? defaultClientPort : parsed.port,
+      path: parsed.path.isEmpty || parsed.path == '/' ? '/remote' : parsed.path,
+    );
+  }
 
   RemoteAudioSink? _audioSink;
   RemoteAudioPlayer? _audioPlayer;
@@ -399,7 +432,7 @@ class RemoteControlService {
 
       case RemoteAppRole.client:
         final client = RemoteBrokerClient(
-          uri: Uri.parse(config.hostUrl.trim()),
+          uri: _clientUri(config.hostUrl.trim()),
           token: token,
         );
         if (!await client.connect()) {

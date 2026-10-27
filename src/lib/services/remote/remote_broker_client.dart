@@ -34,6 +34,14 @@ class RemoteBrokerClient {
   /// runs without authentication).
   RemoteBrokerClient({required this.uri, this.token});
 
+  /// How long a connect attempt may take before it is reported as failed.
+  ///
+  /// Ten seconds is long enough for a slow but working link and short enough
+  /// that a wrong address is answered rather than waited on. It is a ceiling,
+  /// not a health check: a host that accepts the socket and then stays silent
+  /// still connects.
+  static const Duration connectTimeout = Duration(seconds: 10);
+
   final Uri uri;
   final String? token;
 
@@ -94,6 +102,11 @@ class RemoteBrokerClient {
   ///
   /// Returns `false` on any failure (refused, 401, handshake error) without
   /// throwing, so a caller can surface a retry in the UI.
+  ///
+  /// Bounded by [connectTimeout]. Without it an unreachable host (wrong
+  /// address, closed port, packets dropped by a firewall) leaves the await
+  /// pending for as long as the platform's TCP stack allows, which on a phone
+  /// is long enough to look like a hang.
   Future<bool> connect() async {
     if (_socket != null) return true;
     WebSocket socket;
@@ -103,7 +116,13 @@ class RemoteBrokerClient {
         headers: token == null
             ? null
             : <String, dynamic>{'Authorization': 'Bearer $token'},
+      ).timeout(connectTimeout);
+    } on TimeoutException {
+      debugPrint(
+        'RemoteBrokerClient: connect to ${uri.host}:${uri.port} timed out '
+        'after ${connectTimeout.inSeconds}s',
       );
+      return false;
     } catch (e) {
       debugPrint('RemoteBrokerClient: connect failed: $e');
       return false;

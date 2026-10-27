@@ -92,6 +92,10 @@ class RemotePttState extends ChangeNotifier {
   /// The trigger went down.
   void press() {
     if (_disposed) return;
+    // A press within the hold window cancels the hand-back, so authority can
+    // never be revoked mid-sentence by a timer armed by the previous press.
+    _holdTimer?.cancel();
+    _holdTimer = null;
     if (service.isOperator) {
       _pendingPress = false;
       unawaited(service.setTransmitHeld(true).then((_) => _notify()));
@@ -104,14 +108,56 @@ class RemotePttState extends ChangeNotifier {
     _notify();
   }
 
+  /// How long transmit authority is kept after the trigger comes up.
+  ///
+  /// Decision A: releasing the trigger stops transmitting but does not hand
+  /// the authority back, so the next press transmits immediately instead of
+  /// re-requesting it (and possibly losing a race to another client between
+  /// one sentence and the next). After [holdDuration] with no press the
+  /// authority is returned, because holding it indefinitely would lock every
+  /// other client out -- D5 has no pre-emption, so this timeout is the only
+  /// thing that frees the station for somebody else.
+  static const Duration holdDuration = Duration(minutes: 5);
+
+  Timer? _holdTimer;
+
   /// The trigger came up, was cancelled, or the control is going away.
+  ///
+  /// Stops transmitting at once. Authority is kept for [holdDuration] and
+  /// released by a timer, so a pause between transmissions does not cost the
+  /// operator their place.
   void release() {
     if (_disposed) return;
     _pendingPress = false;
     unawaited(service.setTransmitHeld(false).then((_) => _notify()));
-    // Hand authority back so the next operator is not locked out by a button
-    // nobody is holding.
+    _scheduleAuthorityRelease();
+  }
+
+  /// Arms the timer that gives the transmitter back.
+  ///
+  /// Restarting it on every release is the point: the window is measured from
+  /// the last time the operator was transcribing, not from when they first
+  /// took the lock.
+  void _scheduleAuthorityRelease() {
+    _holdTimer?.cancel();
+    if (!service.isOperator) return;
+    _holdTimer = Timer(holdDuration, () {
+      _holdTimer = null;
+      if (_disposed) return;
+      service.releaseOperator();
+      _notify();
+    });
+  }
+
+  /// Give the transmitter back now, without waiting out [holdDuration].
+  ///
+  /// Wired to dispose and available for an explicit "release" action, so a
+  /// user can free the station for somebody else without closing the app.
+  void releaseAuthorityNow() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
     service.releaseOperator();
+    _notify();
   }
 
   void _onIsOperatorChanged(int deviceId, String name, Object? data) {
@@ -120,6 +166,22 @@ class RemotePttState extends ChangeNotifier {
     if (granted && _pendingPress && !_disposed) {
       _pendingPress = false;
       unawaited(service.setTransmitHeld(true));
+    } else if (granted && !_pendingPress && !_disposed) {
+      // Authority arrived after the trigger was already released (the host
+      // answered late). Nobody is holding the button, so start the hold window
+      // -- otherwise the authority would be held with no timer at all.
+      _holdTimer?.cancel();
+      _holdTimer = Timer(holdDuration, () {
+        _holdTimer = null;
+        if (_disposed) return;
+        service.releaseOperator();
+        _notify();
+      });
+    } else if (!granted) {
+      // Lost it (host released, peer took over, or a refusal): nothing left to
+      // hold on to, so stop pretending a window is running.
+      _holdTimer?.cancel();
+      _holdTimer = null;
     }
     _notify();
   }
@@ -141,13 +203,20 @@ class RemotePttState extends ChangeNotifier {
   }
 
   /// Detaches from the broker and makes sure nothing is left keyed.
+  ///
+  /// The hold timer is cancelled and the authority handed back here: this
+  /// state going away means this client is no longer a candidate operator, and
+  /// letting the timer fire later would touch an already-disposed notifier.
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _holdTimer?.cancel();
+    _holdTimer = null;
     DataBroker.unsubscribe(_broker);
     _pendingPress = false;
     unawaited(service.setTransmitHeld(false));
+    service.releaseOperator();
     super.dispose();
   }
 }

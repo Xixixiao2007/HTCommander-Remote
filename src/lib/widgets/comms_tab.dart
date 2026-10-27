@@ -64,7 +64,12 @@ class CommsTab extends StatefulWidget {
   /// The tab receives it rather than reaching for a global, so the control can
   /// be tested with a stand-in and a build without remote control looks exactly
   /// like upstream.
-  final RemotePttState? remotePtt;
+  ///
+  /// A listenable, not a plain value: the client session starts in the
+  /// background, so this tab is built before the control exists. Reading the
+  /// value once would leave the control permanently absent on a client that
+  /// connected a moment later -- which is exactly what happened.
+  final ValueListenable<RemotePttState?>? remotePtt;
 
   @override
   State<CommsTab> createState() => _CommsTabState();
@@ -2961,7 +2966,13 @@ class _CommsTabState extends State<CommsTab>
           if (widget.remotePtt != null)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: RemotePttPanel(state: widget.remotePtt),
+              // Rebuilt when the background session publishes its PTT state;
+              // the panel renders nothing until then.
+              child: ValueListenableBuilder<RemotePttState?>(
+                valueListenable: widget.remotePtt!,
+                builder: (BuildContext context, RemotePttState? ptt, Widget? _) =>
+                    RemotePttPanel(state: ptt),
+              ),
             ),
           if (_isMuted && _sstvAutoMuted) _buildMuteBanner(),
           if (_showDeemphasisWarning) _buildDeemphasisBanner(),

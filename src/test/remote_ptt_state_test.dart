@@ -14,7 +14,7 @@
 // Acceptance criteria:
 //   AC-T5j.1  pressing without authority asks for it and opens no microphone
 //   AC-T5j.2  once granted, the pending press opens the microphone
-//   AC-T5j.3  releasing stops transmitting and gives authority back
+//   AC-T5j.3  releasing stops transmitting but keeps authority for 5 minutes
 //   AC-T5j.4  a refusal is exposed for display
 //   AC-T5j.5  the binding reports who else holds the transmitter
 //   AC-T5j.6  dispose leaves nothing held
@@ -190,7 +190,7 @@ void main() {
     expect(ptt.isTransmitting, isTrue);
   });
 
-  test('AC-T5j.3 releasing stops transmitting and gives authority back',
+  test('AC-T5j.3 releasing stops transmitting but keeps authority (decision A)',
       () async {
     ptt.press();
     expect(await _waitFor(() => host.verbs.contains('operator-acquire')), isTrue);
@@ -200,13 +200,59 @@ void main() {
     ptt.release();
     expect(await _waitFor(() => !mic.started), isTrue,
         reason: 'the microphone must close on release');
+    expect(mic.started, isFalse, reason: 'audio must stop immediately');
+
+    // Behaviour change, deliberately: the authority is held for
+    // RemotePttState.holdDuration so the next press transmits at once instead
+    // of racing another client for it. It is still handed back eventually --
+    // see the hold-window tests below.
+    expect(
+      host.verbs.contains('operator-release'),
+      isFalse,
+      reason: 'releasing the button must not give authority back immediately',
+    );
+    expect(ptt.service.isOperator, isTrue);
+    expect(ptt.isTransmitting, isFalse);
+  });
+
+  test('AC-T5j.3b releaseAuthorityNow hands it back without waiting', () async {
+    ptt.press();
+    expect(await _waitFor(() => host.verbs.contains('operator-acquire')), isTrue);
+    host.grant('remote-4');
+    expect(await _waitFor(() => mic.started), isTrue);
+
+    ptt.release();
+    expect(await _waitFor(() => !mic.started), isTrue);
+
+    ptt.releaseAuthorityNow();
     expect(
       await _waitFor(() => host.verbs.contains('operator-release')),
       isTrue,
-      reason: 'releasing the button must not keep the transmitter locked away '
-          'from other operators',
+      reason: 'an explicit release frees the station for somebody else now',
     );
-    expect(ptt.isTransmitting, isFalse);
+  });
+
+  test('AC-T5j.3c a press inside the hold window cancels the hand-back',
+      () async {
+    ptt.press();
+    expect(await _waitFor(() => host.verbs.contains('operator-acquire')), isTrue);
+    host.grant('remote-4');
+    expect(await _waitFor(() => mic.started), isTrue);
+
+    ptt.release();
+    expect(await _waitFor(() => !mic.started), isTrue);
+
+    // Pressing again must transmit straight away: authority was never given
+    // back, so no second acquire is needed.
+    final acquiresBefore =
+        host.verbs.where((String v) => v == 'operator-acquire').length;
+    ptt.press();
+    expect(await _waitFor(() => mic.started), isTrue);
+    expect(
+      host.verbs.where((String v) => v == 'operator-acquire').length,
+      acquiresBefore,
+      reason: 'a press inside the window must reuse the authority it kept',
+    );
   });
 
   test('AC-T5j.4 a refusal is exposed for display', () async {

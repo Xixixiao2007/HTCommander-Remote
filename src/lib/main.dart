@@ -53,10 +53,13 @@ import 'echolink/echolink_manager_stub.dart'
 // glue is never compiled for the browser.
 import 'aprsis/aprsis_manager_stub.dart'
     if (dart.library.io) 'aprsis/aprsis_manager.dart';
-// APRS cloud push (Firebase Cloud Messaging) relies on dart:io + native
-// Firebase; use a no-op stub on web so it is never compiled for the browser.
-import 'services/aprs_cloud_service_stub.dart'
-    if (dart.library.io) 'services/aprs_cloud_service.dart';
+// APRS cloud push: disabled in this fork on every platform, so the no-op
+// implementation is unconditionally imported. Upstream swaps in the real
+// Firebase-backed service under `if (dart.library.io)`, which pulls Firebase
+// Cloud Messaging (and Google as the transport) into every mobile build; that
+// dependency is what this fork removes. The stub keeps the same public shape,
+// so nothing else changes if the feature is ever restored.
+import 'services/aprs_cloud_service_stub.dart';
 // AllStarLink relies on dart:io UDP sockets + native audio; use a no-op stub on
 // web so the IAX2 internet-radio glue is never compiled for the browser.
 import 'allstar/allstar_manager_stub.dart'
@@ -84,6 +87,7 @@ import 'services/db/app_database.dart';
 import 'services/remote/remote_audit.dart';
 import 'services/remote/remote_audio_sink.dart';
 import 'services/remote/remote_control_service.dart';
+import 'services/remote/remote_mic_source.dart';
 import 'services/remote/remote_ptt_state.dart';
 import 'services/remote/remote_role.dart';
 import 'services/settings_migration.dart';
@@ -309,7 +313,44 @@ RemoteControlService? _remoteControl;
 /// Press-to-talk state for the remote client role (decision B: the control
 /// lives in the 通信 tab, next to the local PTT). Null unless this install is
 /// acting as a client of a host.
-RemotePttState? _remotePtt;
+///
+/// A ValueNotifier rather than a plain field because the session now starts in
+/// the background: the first frame is built before the client has connected, so
+/// the panel has to be able to appear later. Assigning through this notifier
+/// rebuilds the listeners, which is what makes the control show up once the
+/// host is reached instead of never.
+final ValueNotifier<RemotePttState?> _remotePtt =
+    ValueNotifier<RemotePttState?>(null);
+
+/// Starts the remote-control session in the background and records the outcome.
+///
+/// Called instead of `await service.start()` so a slow or hanging connect can
+/// never hold up the rest of startup: the client role's connect() has no
+/// timeout, and blocking on it also blocked the settings screen needed to
+/// correct a bad host address. The session appears once it is up; the PTT panel
+/// renders nothing while the service reports no active role, so a late start is
+/// harmless.
+Future<void> _startRemoteControl(RemoteControlService service) async {
+  try {
+    final bool ok = await service.start();
+    if (!ok) {
+      // Settings-driven, so the reason has to be visible in the log until the
+      // settings screen can show it inline.
+      debugPrint('RemoteControl: ${service.errors.join(' ')}');
+      return;
+    }
+    debugPrint('RemoteControl: running as ${service.config.role.name}');
+    // Only a client needs a transmit control: a host transmits through its own
+    // radio path, and a standalone install has no remote session.
+    if (service.config.role == RemoteAppRole.client) {
+      _remotePtt.value = RemotePttState(service: service);
+    }
+  } catch (e, st) {
+    // A start() that throws must not become an unhandled async error, which on
+    // mobile is a crash report with no indication of which role failed.
+    debugPrint('RemoteControl: start failed: $e\n$st');
+  }
+}
 
 Future<void> _startApp(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -554,10 +595,16 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('MeshCoreManager', meshCoreManager);
   }
 
-  // Register the APRS cloud push service (Android/iOS) so that, when the user
-  // enables push notifications in Settings, the app registers with
-  // aprs.meshcentral.com and receives APRS messages addressed to its station as
-  // push notifications - even when the app is closed. A no-op elsewhere.
+  // APRS cloud push is disabled in this fork.
+  //
+  // Upstream delivers APRS messages addressed to your station as push
+  // notifications through Firebase Cloud Messaging, which routes them via
+  // Google. This fork drops that path deliberately: the feature is replaced by
+  // the no-op implementation on every platform, so it costs one dead switch in
+  // Settings instead of a Google dependency in the build.
+  //
+  // The call below stays so the seam keeps exactly one shape -- if the feature
+  // is ever restored, only the conditional import above needs to change.
   AprsCloudService.instance.init();
   DataBroker.addDataHandler('AprsCloudService', AprsCloudService.instance);
 
@@ -678,19 +725,28 @@ Future<void> _startApp(List<String> args) async {
         audioSinkFactory: roleConfig.role == RemoteAppRole.client
             ? PcmPlayerAudioSink.open
             : null,
+        // Only a client needs to capture: a host transmits through its own
+        // radio path. Without this the client could never transmit -- the
+        // service treats a null factory as "capture unavailable" and returned
+        // silently, so holding PTT did nothing and said nothing.
+        micSourceFactory: roleConfig.role == RemoteAppRole.client
+            ? MicrophoneCaptureSource.new
+            : null,
       );
-      if (!await _remoteControl!.start()) {
-        // Settings-driven, so the reason has to be visible in the log until the
-        // settings screen (T3b-c) can show it inline.
-        debugPrint('RemoteControl: ${_remoteControl!.errors.join(' ')}');
-      } else {
-        debugPrint('RemoteControl: running as ${roleConfig.role.name}');
-        // Only a client needs a transmit control: a host transmits through its
-        // own radio path, and a standalone install has no remote session.
-        if (roleConfig.role == RemoteAppRole.client) {
-          _remotePtt = RemotePttState(service: _remoteControl!);
-        }
-      }
+      // Started WITHOUT awaiting it, deliberately.
+      //
+      // start() for the client role calls WebSocket.connect(), which has no
+      // timeout. When the host is unreachable (wrong address, closed port, a
+      // firewall dropping packets) that await can hang for a long time. Doing
+      // it here blocked the rest of startup with it, so the whole app -- the
+      // settings screen included -- was unusable exactly when the mistake was
+      // a bad address that needed fixing in those settings.
+      //
+      // The consequence is that a client may reach a first frame before the
+      // session is up, which the PTT panel already handles by rendering
+      // nothing while the service has no active role. Errors are still logged
+      // when the attempt finishes.
+      unawaited(_startRemoteControl(_remoteControl!));
     }
   }
 
