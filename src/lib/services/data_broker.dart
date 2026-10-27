@@ -375,7 +375,13 @@ class DataBroker {
         // Apply locally for immediate UI responsiveness, then forward to the
         // host so host-side handlers and the other windows are notified.
         broker._applyLocal(deviceId, name, data, store, allowEmpty: allowEmpty);
-        broker._sendToHost(deviceId, name, data, store);
+        if (_remoteHost != null) {
+          // Remote client (another machine over /remote): same contract as the
+          // detached-window MethodChannel, different carrier.
+          _sendToRemoteHost(deviceId, name, data, store);
+        } else {
+          broker._sendToHost(deviceId, name, data, store);
+        }
         break;
     }
 
@@ -1006,6 +1012,96 @@ class DataBroker {
       } catch (_) {
         // Peer socket died between the count check and this send.
       }
+    }
+  }
+
+  // ========== Remote host transport (this broker is the remote client) ======
+  //
+  // Mirror image of the remote-peer API above: when this instance is the
+  // secondary machine, it forwards its own dispatches to the authoritative
+  // host and applies what the host sends back. Uses the same message shape,
+  // so one protocol serves both directions (see remote_broker_server.dart).
+
+  /// Sends a message to the remote host. Null when not acting as a remote
+  /// client (i.e. the detached-window MethodChannel path is in use instead).
+  static void Function(Map<String, Object?> message)? _remoteHost;
+
+  /// Whether this broker is attached to a remote host over the network.
+  static bool get isRemoteClient => _remoteHost != null;
+
+  /// Becomes a client of a remote host, forwarding dispatches through [send].
+  ///
+  /// Sets the broker role to client so [dispatch] takes the forward path and
+  /// [$this] stops persisting device-0 values locally (the host owns them).
+  static void attachRemoteHost(void Function(Map<String, Object?> message) send) {
+    final broker = _instance;
+    _remoteHost = send;
+    broker._role = DataBrokerRole.client;
+    // A client has no local preferences store of its own to trust; mark
+    // initialized so reads fall back to whatever the host has pushed.
+    broker._initialized = true;
+  }
+
+  /// Detaches from the remote host, restoring standalone behaviour.
+  static void detachRemoteHost() {
+    final broker = _instance;
+    if (_remoteHost == null) return;
+    _remoteHost = null;
+    if (broker._role == DataBrokerRole.client) {
+      broker._role = DataBrokerRole.standalone;
+    }
+  }
+
+  /// Applies one value pushed by the remote host.
+  static void applyRemoteUpdate({
+    required int deviceId,
+    required String name,
+    required String? payload,
+    bool store = true,
+  }) {
+    final broker = _instance;
+    final data = broker._decode(payload);
+    broker._applyLocal(deviceId, name, data, store);
+  }
+
+  /// Applies a full snapshot pushed by the remote host.
+  static void applyRemoteSnapshot(List<Map<String, Object?>> entries) {
+    final broker = _instance;
+    for (final entry in entries) {
+      final deviceId = entry['deviceId'];
+      final name = entry['name'];
+      if (deviceId is! int || name is! String) continue;
+      final payload = entry['payload'];
+      broker._applyLocal(
+        deviceId,
+        name,
+        broker._decode(payload is String ? payload : null),
+        true,
+      );
+    }
+  }
+
+  /// Client only: forwards a locally originated dispatch to the remote host.
+  static void _sendToRemoteHost(
+    int deviceId,
+    String name,
+    Object? data,
+    bool store,
+  ) {
+    final send = _remoteHost;
+    if (send == null) return;
+    final payload = _instance._encode(data);
+    if (payload == null && data != null) return; // unencodable, skip
+    try {
+      send(<String, Object?>{
+        'm': 'dispatch',
+        'deviceId': deviceId,
+        'name': name,
+        'payload': payload,
+        'store': store,
+      });
+    } catch (_) {
+      // Transport died; the client's own reconnect logic handles it.
     }
   }
 
