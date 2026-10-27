@@ -43,6 +43,7 @@ import 'remote_audit.dart';
 import 'remote_audio.dart';
 import 'remote_audio_resample.dart';
 import 'remote_client_address.dart';
+import 'remote_operator_lock.dart';
 import 'remote_token_store.dart';
 
 /// Serves the DataBroker protocol to remote HTCommander clients over WebSocket.
@@ -66,6 +67,7 @@ class RemoteBrokerServer {
     this.forwardHostAudio = false,
     this.auditLog,
     this.trustForwardedFor = false,
+    this.operatorLock,
   }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
@@ -118,6 +120,14 @@ class RemoteBrokerServer {
   /// Per-peer facts kept only so the detach line can name who left.
   final Map<String, _PeerAuditInfo> _peerAudit =
       <String, _PeerAuditInfo>{};
+
+  /// Who may transmit (decision D5). When set, inbound audio from any peer that
+  /// is not the holder is dropped, because D5 says only the operator may key
+  /// the transmitter.
+  ///
+  /// Null leaves uplink audio ungated, which is only appropriate for tests or a
+  /// host that never feeds it into a radio.
+  final RemoteOperatorLock? operatorLock;
 
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
@@ -189,6 +199,11 @@ class RemoteBrokerServer {
       );
       // Join the audio path only while we are listening, so a stopped server
       // cannot accumulate taps across start/stop cycles.
+      // Let every client see who holds transmit authority, and follow changes.
+      final lock = operatorLock;
+      if (lock != null) {
+        lock.onHolderChanged = _broadcastOperator;
+      }
       if (forwardHostAudio && !_tapRegistered) {
         _audioTap ??= (Int16List pcm, int rate, int channels) {
           broadcastAudio(pcm, sampleRate: rate, channels: channels);
@@ -205,6 +220,7 @@ class RemoteBrokerServer {
 
   /// Stops listening and detaches every peer.
   void stop() {
+    operatorLock?.onHolderChanged = null;
     if (_tapRegistered) {
       final tap = _audioTap;
       if (tap != null) PcmPlayer.removePlaybackTap(tap);
@@ -301,6 +317,9 @@ class RemoteBrokerServer {
   void _detach(String peerId) {
     _peers.remove(peerId);
     DataBroker.detachRemotePeer(peerId);
+    // A peer that leaves must not keep transmit authority: D5 has no local
+    // pre-emption, so this is the only automatic release path.
+    operatorLock?.handlePeerDetached(peerId);
     final info = _peerAudit.remove(peerId);
     if (info != null) {
       _record(
@@ -367,6 +386,11 @@ class RemoteBrokerServer {
     if (data is List<int>) {
       final listener = onPeerAudio;
       if (listener == null) return;
+      // Decision D5: only the operator may transmit. Dropping non-operator
+      // audio here (rather than in the transmit path) means an unauthorised
+      // peer's samples never reach a radio at all.
+      final lock = operatorLock;
+      if (lock != null && !lock.isOperator(peerId)) return;
       final frame = RemoteAudio.decode(
         data is Uint8List ? data : Uint8List.fromList(data),
       );
@@ -416,10 +440,30 @@ class RemoteBrokerServer {
           // Ignore.
         }
         break;
+      case 'operator-acquire':
+        operatorLock?.acquire(peerId);
+        break;
+      case 'operator-release':
+        operatorLock?.release(peerId);
+        break;
       default:
         // Unknown verb: ignore rather than close, so a newer client degrade
         // gracefully against an older host.
         break;
+    }
+  }
+
+  /// Tells every attached peer who currently holds transmit authority.
+  void _broadcastOperator(String? holderId) {
+    for (final socket in _peers.values.toList()) {
+      try {
+        socket.add(jsonEncode(<String, Object?>{
+          'm': 'operator',
+          'holderId': holderId,
+        }));
+      } catch (_) {
+        // Peer vanished mid-send; its close handler detaches it.
+      }
     }
   }
 
