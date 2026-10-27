@@ -34,6 +34,66 @@ abstract class PcmPlayer {
   static void Function(Int16List pcm, int sampleRate, int channels)?
   playbackTap;
 
+  /// Additional playback taps, dispatched after [playbackTap].
+  ///
+  /// Additive on purpose: the hosted-web bridge already owns the single
+  /// [playbackTap] slot, and remote control needs the same host PCM. Rather
+  /// than convert that slot into a list (which would churn an audio-core file
+  /// and its only caller), the extra listeners live here and one helper
+  /// dispatches to both.
+  static final List<void Function(Int16List pcm, int sampleRate, int channels)>
+      _extraPlaybackTaps =
+      <void Function(Int16List pcm, int sampleRate, int channels)>[];
+
+  /// Registers an additional playback tap. Pair with [removePlaybackTap].
+  static void addPlaybackTap(
+    void Function(Int16List pcm, int sampleRate, int channels) tap,
+  ) {
+    _extraPlaybackTaps.add(tap);
+  }
+
+  /// Removes a tap previously registered with [addPlaybackTap].
+  static void removePlaybackTap(
+    void Function(Int16List pcm, int sampleRate, int channels) tap,
+  ) {
+    _extraPlaybackTaps.remove(tap);
+  }
+
+  /// Drops every additional tap. Test support: keeps static state from leaking
+  /// between test cases.
+  static void resetPlaybackTapsForTest() {
+    _extraPlaybackTaps.clear();
+  }
+
+  /// Feeds [pcm] to every registered tap: the legacy single slot first, then
+  /// the additive ones.
+  ///
+  /// Every call is isolated. This runs on the audio feed path (see [feed]), so
+  /// one broken consumer — a mirror whose socket just died — must degrade to a
+  /// dropped frame, not to silent host audio.
+  static void invokePlaybackTaps(
+    Int16List pcm,
+    int sampleRate,
+    int channels,
+  ) {
+    final legacy = playbackTap;
+    if (legacy != null) {
+      try {
+        legacy(pcm, sampleRate, channels);
+      } catch (_) {
+        // A broken mirror must not break playback.
+      }
+    }
+    for (final tap
+        in List<void Function(Int16List, int, int)>.of(_extraPlaybackTaps)) {
+      try {
+        tap(pcm, sampleRate, channels);
+      } catch (_) {
+        // Same reasoning as above.
+      }
+    }
+  }
+
   /// Host application output volume (0.0-1.0), applied to every buffer AFTER
   /// [playbackTap]. This lets the web mirror receive full-volume audio while the
   /// host speaker honors the level, so the two sides can be muted independently.
@@ -375,10 +435,7 @@ class _RefCountedPcmPlayer implements PcmPlayer {
   @override
   Future<void> feed(Int16List pcm) {
     if (!_deviceOpen) return Future<void>.value();
-    final tap = PcmPlayer.playbackTap;
-    if (tap != null) {
-      tap(pcm, _rate ?? 32000, _channels ?? 1);
-    }
+    PcmPlayer.invokePlaybackTaps(pcm, _rate ?? 32000, _channels ?? 1);
     // Apply the host output volume after the mirror tap so the browser receives
     // full-volume audio and the two sides mute/adjust independently.
     final vol = PcmPlayer.hostOutputVolume;
