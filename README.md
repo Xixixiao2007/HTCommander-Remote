@@ -3,6 +3,22 @@
 
 # Handi-Talky Commander
 
+> [!IMPORTANT]
+> **This repository is a modified derivative of
+> [Ylianst/HTCommander](https://github.com/Ylianst/HTCommander), published under
+> the Apache License 2.0. It is not the official distribution, and the upstream
+> author is not responsible for the changes made here.**
+>
+> What this fork adds: a **native remote-control** capability, so one application
+> can either attach to a radio and serve remote clients, or act as a secondary
+> client of such a host — with token authentication, a single-operator lock,
+> audit logging and two-way audio. See [REMOTE-CONTROL.md](REMOTE-CONTROL.md) for
+> the design, the security model and how to configure it, and [NOTICE](NOTICE)
+> for the statement of changes required by Apache-2.0 §4(b).
+>
+> The feature is opt-in. Left at its default (`Remote Control: Off`), the
+> application behaves exactly as upstream does.
+
 This is a Amateur Radio (HAM Radio) multiplatform tool for the EchoLink and UV-Pro, UV-50Pro, GA-5WB, VR-N75, VR-N76, VR-N7500, VR-N7600 radios that works on Windows, macOS, Linux, iOS, Android and web as long as you have Bluetooth support. It allows for easy control over the radio with range of feature including channel programming, APRS, WinLink, terminal, torrent file transfer, BBS and more. On some platforms you also have audio support along with speech-to-text and text-to-speech.
 
 ![image](https://github.com/Ylianst/HTCommanderEx/blob/main/docs/images/htcommander.png?raw=true)

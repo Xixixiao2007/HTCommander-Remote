@@ -1,0 +1,71 @@
+HTCommander Remote Control (derivative work)
+============================================
+
+This distribution is a modified derivative of:
+
+    HTCommander
+    Copyright 2026 Ylian Saint-Hilaire
+    https://github.com/Ylianst/HTCommander
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The upstream LICENSE (Apache License 2.0) is unchanged and still applies to
+every upstream file in this repository. No file was relicensed.
+
+
+Statement of changes — Apache License 2.0, section 4(b)
+------------------------------------------------------
+
+Maintainer of this fork: FILL-IN-YOUR-NAME-OR-GITHUB-HANDLE
+Year: 2026
+
+This fork adds a native remote-control capability, described in
+REMOTE-CONTROL.md. Files added or modified:
+
+  Added (all new, Apache-2.0, same copyright holder as upstream):
+    src/lib/services/remote/remote_broker_server.dart
+    src/lib/services/remote/remote_broker_client.dart
+    src/lib/services/remote/remote_token_store.dart
+    src/lib/services/remote/remote_operator_lock.dart
+    src/lib/services/remote/remote_privileged.dart
+    src/lib/services/remote/remote_role.dart
+    src/lib/services/remote/remote_control_service.dart
+    src/lib/services/remote/remote_audio.dart
+    src/lib/services/remote/remote_audio_resample.dart
+    src/lib/services/remote/remote_audio_player.dart
+    src/lib/services/remote/remote_audio_sink.dart
+    src/lib/services/remote/remote_mic_sender.dart
+    src/lib/services/remote/remote_audit.dart
+    src/lib/services/remote/remote_client_address.dart
+    src/lib/services/db/remote_audit_dao.dart
+    src/test/remote_*_test.dart (13 test files)
+
+  Modified (additive; existing behaviour preserved):
+    src/lib/services/data_broker.dart      remote peer + remote host transports
+    src/lib/services/db/app_database_io.dart   new DAO, schema version 3 -> 4
+    src/lib/services/db/app_database_stub.dart matching web stub getter
+    src/lib/radio/pcm_player.dart          multicast playback tap
+    src/lib/main.dart                      startup wiring for the remote role
+    src/lib/dialogs/settings_dialog.dart   Remote Control settings section
+
+Where this fork and the upstream differ in behaviour, the difference is
+opt-in: with the remote role left at its default (Off), the application
+behaves as upstream does.
+
+Notices for third-party components
+----------------------------------
+
+This application depends on third-party packages listed in
+src/pubspec.yaml and native components under src/windows, src/linux and
+src/macos. Those remain under their own licenses, which are unaffected by
+this notice. See the dependency list and each package's own LICENSE.
