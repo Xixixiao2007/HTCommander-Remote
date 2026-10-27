@@ -1,13 +1,18 @@
 name: Deploy GitHub Pages
 
+# Disabled in this fork, deliberately.
+#
+# Upstream runs this to publish its documentation site from docs/. In a fork
+# that would publish a copy of the upstream site under this repository's name,
+# which is misleading and of no use here. It also meant every change to
+# docs/** turned the workflow red on a repository that never enabled Pages, and
+# a red run that is expected is worse than no run: it trains people to ignore
+# the colour and hides real failures.
+#
+# Kept, not deleted, so the decision is visible and reversible: to publish this
+# fork's own documentation site, enable Pages in the repository settings and
+# re-add the triggers below.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-  workflow_run:
-    workflows: ["Release"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +26,8 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Manual dispatch only, so this cannot fail spontaneously.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
