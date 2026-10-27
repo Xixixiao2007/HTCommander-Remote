@@ -69,6 +69,7 @@ class RemoteBrokerServer {
     this.auditLog,
     this.trustForwardedFor = false,
     this.operatorLock,
+    this.transmitBurstGap = const Duration(seconds: 2),
   }) : bindAddress = bindAddress ?? InternetAddress.loopbackIPv4;
 
   /// The single endpoint a client connects to.
@@ -129,6 +130,16 @@ class RemoteBrokerServer {
   /// Null leaves uplink audio ungated, which is only appropriate for tests or a
   /// host that never feeds it into a radio.
   final RemoteOperatorLock? operatorLock;
+
+  /// Silence gap that separates one transmission from the next for auditing.
+  ///
+  /// AC6 wants transmissions recorded, but a 20 ms frame stream would flood the
+  /// table and bury the signal, so a burst of audio within this window is one
+  /// audit entry.
+  final Duration transmitBurstGap;
+
+  /// Last uplink audio time per peer, for burst detection.
+  final Map<String, DateTime> _lastTxAt = <String, DateTime>{};
 
   HttpServer? _server;
   final Map<String, WebSocket> _peers = <String, WebSocket>{};
@@ -317,6 +328,7 @@ class RemoteBrokerServer {
 
   void _detach(String peerId) {
     _peers.remove(peerId);
+    _lastTxAt.remove(peerId);
     DataBroker.detachRemotePeer(peerId);
     // A peer that leaves must not keep transmit authority: D5 has no local
     // pre-emption, so this is the only automatic release path.
@@ -385,13 +397,46 @@ class RemoteBrokerServer {
   void _onPeerMessage(String peerId, dynamic data) {
     // Binary frames from a peer are microphone audio (uplink).
     if (data is List<int>) {
-      final listener = onPeerAudio;
-      if (listener == null) return;
+      // AC6: record who keyed the transmitter, once per burst rather than once
+      // per frame. This is the entry an operator would look for after an
+      // incident, and it was missing entirely.
+      final info = _peerAudit[peerId];
+      final now = DateTime.now();
+      final lastAt = _lastTxAt[peerId];
+      final newBurst =
+          lastAt == null || now.difference(lastAt) > transmitBurstGap;
+      _lastTxAt[peerId] = now;
+
       // Decision D5: only the operator may transmit. Dropping non-operator
       // audio here (rather than in the transmit path) means an unauthorised
       // peer's samples never reach a radio at all.
       final lock = operatorLock;
-      if (lock != null && !lock.isOperator(peerId)) return;
+      final refused = lock != null && !lock.isOperator(peerId);
+      if (refused) {
+        if (newBurst) {
+          _record(
+            'transmit-refused',
+            peerId: peerId,
+            address: info?.address ?? 'unknown',
+            tokenId: info?.tokenId,
+            tokenName: info?.tokenName,
+            extra: <String, Object?>{'reason': 'not-operator'},
+          );
+        }
+        return;
+      }
+      if (newBurst) {
+        _record(
+          'transmit',
+          peerId: peerId,
+          address: info?.address ?? 'unknown',
+          tokenId: info?.tokenId,
+          tokenName: info?.tokenName,
+        );
+      }
+
+      final listener = onPeerAudio;
+      if (listener == null) return;
       final frame = RemoteAudio.decode(
         data is Uint8List ? data : Uint8List.fromList(data),
       );
