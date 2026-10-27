@@ -36,6 +36,7 @@ import 'comms_dao.dart';
 import 'legacy_import.dart';
 import 'meshcore_dao.dart';
 import 'packets_dao.dart';
+import 'remote_audit_dao.dart';
 
 /// Owns the shared SQLite connection and exposes one DAO per stored table.
 class AppDatabase {
@@ -43,7 +44,8 @@ class AppDatabase {
     : comms = CommsDao(db),
       packets = PacketsDao(db),
       aprsis = AprsisDao(db),
-      meshcore = MeshCoreDao(db);
+      meshcore = MeshCoreDao(db),
+      remoteAudit = RemoteAuditDao(db);
 
   /// The open database handle. DAOs run their statements against this.
   final Database db;
@@ -60,9 +62,12 @@ class AppDatabase {
   /// MeshCore direct and group message history.
   final MeshCoreDao meshcore;
 
+  /// Remote-control audit trail (who attached, transmitted, was refused).
+  final RemoteAuditDao remoteAudit;
+
   /// Current schema version. Bump and add an [onUpgrade] branch when the schema
   /// changes.
-  static const int _schemaVersion = 3;
+  static const int _schemaVersion = 4;
 
   static const String _dbFileName = 'htcommander.db';
 
@@ -122,12 +127,14 @@ class AppDatabase {
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) await MeshCoreDao.createSchema(db);
           if (oldVersion < 3) await PacketsDao.addAprsHiddenColumn(db);
+          if (oldVersion < 4) await RemoteAuditDao.createSchema(db);
         },
       ),
     );
   }
 
   static Future<void> _createSchema(Database db) async {
+    await RemoteAuditDao.createSchema(db);
     await db.execute('''
       CREATE TABLE comms_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
