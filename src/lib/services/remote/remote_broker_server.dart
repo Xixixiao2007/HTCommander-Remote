@@ -484,12 +484,17 @@ class RemoteBrokerServer {
   }
 
   /// Tells every attached peer who currently holds transmit authority.
+  ///
+  /// Each peer also gets its own id in `you`, because otherwise it cannot tell
+  /// whether the holder is itself -- and "am I the operator?" is the only
+  /// question this broadcast exists to answer.
   void _broadcastOperator(String? holderId) {
-    for (final socket in _peers.values.toList()) {
+    for (final entry in _peers.entries.toList()) {
       try {
-        socket.add(jsonEncode(<String, Object?>{
+        entry.value.add(jsonEncode(<String, Object?>{
           'm': 'operator',
           'holderId': holderId,
+          'you': entry.key,
         }));
       } catch (_) {
         // Peer vanished mid-send; its close handler detaches it.

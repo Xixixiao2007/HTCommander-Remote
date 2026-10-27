@@ -54,6 +54,29 @@ class RemoteBrokerClient {
   final StreamController<RemoteAudioFrame> _audioController =
       StreamController<RemoteAudioFrame>.broadcast();
 
+  String? _operatorHolderId;
+  String? _selfPeerId;
+
+  /// Who currently holds transmit authority on the host, or null.
+  String? get operatorHolderId => _operatorHolderId;
+
+  /// This client's own peer id, as assigned by the host.
+  String? get selfPeerId => _selfPeerId;
+
+  /// Whether THIS client currently holds transmit authority (decision D5).
+  bool get isOperator =>
+      _operatorHolderId != null && _operatorHolderId == _selfPeerId;
+
+  /// Notified whenever the holder changes, including on release (null).
+  void Function(String? holderId)? onOperatorChanged;
+
+  /// Asks the host for transmit authority. The host grants it only if nobody
+  /// else holds it: D5 has no pre-emption.
+  void acquireOperator() => _send(<String, Object?>{'m': 'operator-acquire'});
+
+  /// Gives transmit authority back.
+  void releaseOperator() => _send(<String, Object?>{'m': 'operator-release'});
+
   /// Connects to the host and adopts the client role.
   ///
   /// Returns `false` on any failure (refused, 401, handshake error) without
@@ -193,6 +216,14 @@ class RemoteBrokerClient {
           payload: payload is String ? payload : null,
           store: message['store'] as bool? ?? true,
         );
+        break;
+      case 'operator':
+        // The host reports who holds authority and, so this client can tell
+        // whether that is itself, its own peer id.
+        _operatorHolderId = message['holderId'] as String?;
+        final you = message['you'];
+        if (you is String) _selfPeerId = you;
+        onOperatorChanged?.call(_operatorHolderId);
         break;
       default:
         break;
