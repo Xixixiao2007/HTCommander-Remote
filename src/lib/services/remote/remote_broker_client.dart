@@ -70,6 +70,19 @@ class RemoteBrokerClient {
   /// Notified whenever the holder changes, including on release (null).
   void Function(String? holderId)? onOperatorChanged;
 
+  /// Notified when the host refuses a write this client attempted.
+  ///
+  /// The host has always answered a non-operator write with a `refused`
+  /// message; without a consumer here that feedback reached nobody, so the UI
+  /// could not explain why an action did nothing.
+  void Function(String name, String reason)? onRefused;
+
+  String? _lastRefusalReason;
+
+  /// Reason for the most recent refusal, so a UI can redraw from state rather
+  /// than depending on having been listening at the right moment.
+  String? get lastRefusalReason => _lastRefusalReason;
+
   /// Asks the host for transmit authority. The host grants it only if nobody
   /// else holds it: D5 has no pre-emption.
   void acquireOperator() => _send(<String, Object?>{'m': 'operator-acquire'});
@@ -216,6 +229,18 @@ class RemoteBrokerClient {
           payload: payload is String ? payload : null,
           store: message['store'] as bool? ?? true,
         );
+        break;
+      case 'refused':
+        // A refusal without a name is not actionable; ignore it rather than
+        // showing the user an error with nothing to attach it to.
+        final refusedName = message['name'];
+        if (refusedName is! String) return;
+        final reasonRaw = message['reason'];
+        final reason = reasonRaw is String && reasonRaw.isNotEmpty
+            ? reasonRaw
+            : 'unknown';
+        _lastRefusalReason = reason;
+        onRefused?.call(refusedName, reason);
         break;
       case 'operator':
         // The host reports who holds authority and, so this client can tell
