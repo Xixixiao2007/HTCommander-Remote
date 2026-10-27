@@ -87,7 +87,15 @@ class RemoteControlService {
   bool get isOperator => _client?.isOperator ?? false;
 
   /// Who holds transmit authority on the host, as far as this client knows.
+  ///
+  /// Null covers two different situations that the caller must separate: no
+  /// session at all, and a session where nobody holds the transmitter. Use
+  /// [isClientConnected] to tell them apart -- "nobody holds it" means asking
+  /// would succeed, "we are not attached" means asking cannot be sent.
   String? get operatorHolderId => _client?.operatorHolderId;
+
+  /// Whether a client session is attached to a host right now.
+  bool get isClientConnected => _client?.isConnected ?? false;
 
   /// Asks the host for transmit authority (client role only).
   ///

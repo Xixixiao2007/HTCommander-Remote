@@ -468,6 +468,11 @@ class RemoteBrokerServer {
         data is Uint8List ? data : Uint8List.fromList(data),
       );
       if (frame == null) return;
+      // Speaking is activity. Without this the idle deadline was measured from
+      // the moment authority was granted and never moved, so a client holding
+      // the trigger through a long transmission had the transmitter taken away
+      // mid-sentence once the timeout elapsed.
+      operatorLock?.touch(peerId);
       try {
         listener(peerId, frame);
       } catch (_) {

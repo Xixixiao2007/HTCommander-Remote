@@ -23,8 +23,19 @@ gating without touching this state machine.
 
 /// Tracks which attached remote client currently holds operator authority.
 class RemoteOperatorLock {
+  /// How long a client may hold the transmitter without using it.
+  ///
+  /// Has to match the client's own hold window (RemotePttState.holdDuration),
+  /// because the two describe one agreement: the client believes it keeps the
+  /// transmitter for that long between transmissions, and the host decides
+  /// whether that belief is true. They had different values -- 30s here, 5min
+  /// there -- so the client kept authority it had already lost, 34 seconds
+  /// after letting go of the button. Whichever number is picked, both sides
+  /// must read it from here.
+  static const Duration defaultIdleTimeout = Duration(minutes: 5);
+
   RemoteOperatorLock({
-    this.idleTimeout = const Duration(seconds: 30),
+    this.idleTimeout = defaultIdleTimeout,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 

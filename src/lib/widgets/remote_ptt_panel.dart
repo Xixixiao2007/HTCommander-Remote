@@ -35,6 +35,7 @@ class RemotePttPanel extends StatelessWidget {
     return AnimatedBuilder(
       animation: ptt,
       builder: (BuildContext context, Widget? _) => RemotePttButton(
+        status: ptt.status,
         isOperator: ptt.isOperator,
         isTransmitting: ptt.isTransmitting,
         operatorHolderId: ptt.operatorHolderId,

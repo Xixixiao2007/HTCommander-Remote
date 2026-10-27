@@ -25,6 +25,37 @@ import 'package:flutter/foundation.dart';
 import '../data_broker.dart';
 import '../data_broker_client.dart';
 import 'remote_control_service.dart';
+import 'remote_operator_lock.dart';
+
+/// What a client can do with the host's transmitter right now.
+///
+/// D5 allows many clients but exactly one operator, and no pre-emption. Those
+/// rules leave three answers to "may I transmit?", and they are genuinely
+/// different to a user:
+///
+///  * the transmitter is free, so pressing will be granted;
+///  * this client holds it, so pressing transmits immediately;
+///  * another client holds it, so pressing will be refused.
+///
+/// Collapsing them into a single boolean is what made the device UI
+/// unreadable: "not the operator" read the same whether the station was idle
+/// and available, or busy with somebody else.
+enum RemotePttStatus {
+  /// No session attached, or the host has not reported a holder yet.
+  ///
+  /// Kept separate from [free] on purpose: both have no holder, but only one of
+  /// them can accept a request.
+  unknown,
+
+  /// Nobody holds the transmitter: asking would succeed.
+  free,
+
+  /// This client holds it: pressing transmits.
+  granted,
+
+  /// Another client holds it: asking would be refused until they are done.
+  taken,
+}
 
 /// Holds the state a press-to-talk control renders, and drives the service.
 ///
@@ -94,6 +125,35 @@ class RemotePttState extends ChangeNotifier {
     return reason == null || reason.isEmpty ? null : reason;
   }
 
+  /// What this client can do with the transmitter right now.
+  ///
+  /// Derived from three facts the host already reports -- whether we are
+  /// attached, whether we are the operator, and who the holder is -- so it
+  /// needs no extra wire message. Order matters: holding it outranks having a
+  /// holder id, because the id is our own in that case.
+  RemotePttStatus get status {
+    if (isOperator) return RemotePttStatus.granted;
+    // Knowing a holder outranks the connection check: if the host named
+    // somebody, that answer is as good as a live socket, and it is the more
+    // specific one. Ordering it the other way made a client that had just been
+    // told "remote-9 is on it" report the vaguer "unknown".
+    if (operatorHolderId != null) return RemotePttStatus.taken;
+    if (!service.isClientConnected) return RemotePttStatus.unknown;
+    // Attached, not the operator, nobody named: the lock is free, so a press
+    // will be granted. This is the case the old boolean could not express --
+    // it reported "not the operator" for an idle station too.
+    return RemotePttStatus.free;
+  }
+
+  /// Whether a press right now would be granted rather than refused.
+  ///
+  /// True when free (it will be granted on request) and when already held.
+  bool get canRequestTransmit =>
+      status == RemotePttStatus.free || status == RemotePttStatus.granted;
+
+  /// Whether somebody else currently holds the transmitter.
+  bool get isHeldByOther => status == RemotePttStatus.taken;
+
   /// The trigger went down.
   void press() {
     debugPrint('PTT: press (isOperator=$isOperator disposed=$_disposed)');
@@ -128,7 +188,12 @@ class RemotePttState extends ChangeNotifier {
   /// authority is returned, because holding it indefinitely would lock every
   /// other client out -- D5 has no pre-emption, so this timeout is the only
   /// thing that frees the station for somebody else.
-  static const Duration holdDuration = Duration(minutes: 5);
+  /// Read from the lock's constant rather than written out again: the client's
+  /// hold window and the host's idle expiry describe the same agreement, and
+  /// when they were two independent literals (5 minutes here, 30 seconds
+  /// there) the host silently reclaimed the transmitter while this side still
+  /// believed it held it.
+  static const Duration holdDuration = RemoteOperatorLock.defaultIdleTimeout;
 
   Timer? _holdTimer;
 

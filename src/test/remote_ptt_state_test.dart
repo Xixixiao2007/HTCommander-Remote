@@ -119,6 +119,16 @@ class _FakeHost {
         'you': self,
       }));
 
+  /// The host reports that the lock is free: nobody holds the transmitter.
+  ///
+  /// This is a distinct state from "this client holds it" and from "another
+  /// client holds it", and the wire already carries it -- a null holderId.
+  void releaseHolder() => socket?.add(jsonEncode(<String, Object?>{
+        'm': 'operator',
+        'holderId': null,
+        'you': 'remote-4',
+      }));
+
   void refuse(String name) => socket?.add(jsonEncode(<String, Object?>{
         'm': 'refused',
         'name': name,
@@ -319,5 +329,37 @@ void main() {
 
     expect(await _waitFor(() => !mic.started), isTrue,
         reason: 'disposing the control must not leave a hot microphone');
+  });
+
+  group('AC-T5j.7 the three transmit outcomes are distinguishable', () {
+    test('nobody holds it -> free', () async {
+      // The host reports a null holder once the lock is released, which is the
+      // difference between "idle, ask and you will get it" and "busy".
+      host.releaseHolder();
+      expect(await _waitFor(() => ptt.operatorHolderId == null), isTrue);
+      expect(ptt.status, RemotePttStatus.free);
+      expect(ptt.canRequestTransmit, isTrue);
+      expect(ptt.isHeldByOther, isFalse);
+    });
+
+    test('this client holds it -> granted', () async {
+      ptt.press();
+      expect(await _waitFor(() => host.verbs.contains('operator-acquire')),
+          isTrue);
+      host.grant('remote-4');
+      expect(await _waitFor(() => ptt.isOperator), isTrue);
+      expect(ptt.status, RemotePttStatus.granted);
+      expect(ptt.canRequestTransmit, isTrue);
+      expect(ptt.isHeldByOther, isFalse);
+    });
+
+    test('another client holds it -> taken', () async {
+      host.grantToOther('remote-9', 'remote-4');
+      expect(await _waitFor(() => ptt.operatorHolderId == 'remote-9'), isTrue);
+      expect(ptt.status, RemotePttStatus.taken);
+      expect(ptt.canRequestTransmit, isFalse);
+      expect(ptt.isHeldByOther, isTrue,
+          reason: 'the control needs to say who, not just "no"');
+    });
   });
 }

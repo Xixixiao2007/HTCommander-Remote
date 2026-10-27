@@ -20,6 +20,8 @@ the default.
 
 import 'package:flutter/material.dart';
 
+import '../services/remote/remote_ptt_state.dart';
+
 /// A press-and-hold transmit control for a remote client.
 class RemotePttButton extends StatelessWidget {
   const RemotePttButton({
@@ -28,10 +30,18 @@ class RemotePttButton extends StatelessWidget {
     required this.onReleased,
     required this.isOperator,
     required this.isTransmitting,
+    this.status,
     this.operatorHolderId,
     this.refusalReason,
     this.enabled = true,
   });
+
+  /// What the client can do with the transmitter right now.
+  ///
+  /// Optional so a caller that only knows the old facts still works; when it
+  /// is supplied the label states which of the three D5 outcomes applies
+  /// instead of leaving the user to infer it from a bare refusal.
+  final RemotePttStatus? status;
 
   /// Called when the trigger is pressed.
   final VoidCallback onPressed;
@@ -143,6 +153,31 @@ class RemotePttButton extends StatelessWidget {
   /// like a broken link.
   String? get _subtitle {
     if (isTransmitting) return null;
+    // Prefer the derived status: it separates "the station is idle, press and
+    // you will get it" from "somebody else is on it", which a refusal string
+    // alone cannot express.
+    //
+    // Every non-unknown state says something. An earlier version left
+    // [granted] blank on the grounds that the main label already invites a
+    // press, but the result was a control that went silent exactly while the
+    // user was holding the transmitter -- indistinguishable from having lost
+    // it. The status is the answer to "may I transmit?", so it is always
+    // stated.
+    switch (status) {
+      case RemotePttStatus.free:
+        return 'Available';
+      case RemotePttStatus.granted:
+        return 'Ready';
+      case RemotePttStatus.taken:
+        final holder = operatorHolderId;
+        return holder == null ? 'In use' : 'In use: $holder';
+      case RemotePttStatus.unknown:
+        // Not attached yet: a refusal left over from before is less useful
+        // than saying nothing at all.
+        return null;
+      case null:
+        break;
+    }
     if (!isOperator && operatorHolderId != null) {
       return 'In use: $operatorHolderId';
     }
