@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../services/remote/remote_role.dart';
+import '../services/remote/remote_token_store.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -117,6 +118,19 @@ class _SettingsDialogState extends State<SettingsDialog>
   /// Whether a client token is already stored. The token itself is never put
   /// back into a text field: the field is write-only.
   bool _remoteHasToken = false;
+
+  // Host-side access tokens (T2b). Loaded lazily and only in host mode, so a
+  // platform without a secret store never touches it on the default path.
+  RemoteTokenStore? _remoteTokenStore;
+  List<RemoteToken> _remoteTokens = <RemoteToken>[];
+  bool _remoteTokensLoaded = false;
+  bool _remoteTokensLoading = false;
+  late TextEditingController _remoteTokenNameController;
+  String _remoteTokenStatus = '';
+
+  /// The secret of a token created moments ago. Shown once, then cleared: the
+  /// store keeps only a hash-equivalent record and cannot show it again.
+  String? _remoteNewTokenSecret;
   late TextEditingController _webPortController;
   late TextEditingController _agwpePortController;
   late TextEditingController _airplaneUrlController;
@@ -363,6 +377,8 @@ class _SettingsDialogState extends State<SettingsDialog>
     );
     _remoteClientTokenController = TextEditingController();
     _loadRemoteTokenState();
+    _remoteTokenNameController = TextEditingController();
+    if (_remoteRole == RemoteAppRole.host) _loadRemoteTokens();
 
     _webPortController = TextEditingController(
       text: _settings.webServerPort.toString(),
@@ -454,6 +470,7 @@ class _SettingsDialogState extends State<SettingsDialog>
     _remoteHostUrlController.dispose();
     _remotePortController.dispose();
     _remoteClientTokenController.dispose();
+    _remoteTokenNameController.dispose();
     _webPortController.dispose();
     _agwpePortController.dispose();
     _airplaneUrlController.dispose();
@@ -1143,6 +1160,71 @@ class _SettingsDialogState extends State<SettingsDialog>
     });
   }
 
+  /// Loads the host's issued tokens.
+  ///
+  /// Lazy and failure-tolerant on purpose: a platform without a usable secret
+  /// store must show a message, not throw out of the settings dialog.
+  Future<void> _loadRemoteTokens() async {
+    if (_remoteTokensLoading) return;
+    _remoteTokensLoading = true;
+    try {
+      final store = _remoteTokenStore ??= RemoteTokenStore();
+      await store.load();
+      if (!mounted) return;
+      setState(() {
+        _remoteTokens = List<RemoteToken>.of(store.tokens);
+        _remoteTokensLoaded = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _remoteTokensLoaded = true;
+        _remoteTokenStatus = 'Token storage is unavailable on this platform.';
+      });
+    } finally {
+      _remoteTokensLoading = false;
+    }
+  }
+
+  /// Issues a new token and shows its secret once.
+  Future<void> _generateRemoteToken() async {
+    final name = _remoteTokenNameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _remoteTokenStatus = 'Enter a name for the token.');
+      return;
+    }
+    try {
+      final store = _remoteTokenStore ??= RemoteTokenStore();
+      final token = await store.create(name);
+      _remoteTokenNameController.clear();
+      await _loadRemoteTokens();
+      if (!mounted) return;
+      setState(() {
+        _remoteNewTokenSecret = token.secret;
+        _remoteTokenStatus =
+            'Token created. Copy it now - it is not shown again.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _remoteTokenStatus = 'Could not create a token here.');
+    }
+  }
+
+  /// Revokes one token, disconnecting only that device.
+  Future<void> _revokeRemoteToken(String id) async {
+    final store = _remoteTokenStore;
+    if (store == null) return;
+    try {
+      await store.revoke(id);
+      await _loadRemoteTokens();
+      if (!mounted) return;
+      setState(() => _remoteTokenStatus = 'Token revoked.');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _remoteTokenStatus = 'Could not revoke that token.');
+    }
+  }
+
   /// The Remote Control settings section.
   ///
   /// Strings are hardcoded English, matching the neighbouring RepeaterBook and
@@ -1203,6 +1285,63 @@ class _SettingsDialogState extends State<SettingsDialog>
             'this port.',
             style: DialogStyles.bodyStyle,
           ),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+          Text('Access tokens', style: DialogStyles.labelStyle),
+          const SizedBox(height: 4),
+          const Text(
+            'Each device that may control this station needs its own token. '
+            'Revoking one disconnects only that device.',
+            style: DialogStyles.bodyStyle,
+          ),
+          const SizedBox(height: 8),
+          if (_remoteTokensLoaded && _remoteTokens.isEmpty)
+            const Text('No tokens yet.', style: DialogStyles.bodyStyle),
+          for (final token in _remoteTokens)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${token.name}  -  '
+                    '${token.isActive ? 'active' : 'revoked'}',
+                    style: DialogStyles.bodyStyle,
+                  ),
+                ),
+                if (token.isActive)
+                  TextButton(
+                    onPressed: () => _revokeRemoteToken(token.id),
+                    child: const Text('Revoke'),
+                  ),
+              ],
+            ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _remoteTokenNameController,
+            decoration: _inputDecoration(
+              hintText: 'Name this device, e.g. shack laptop',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              ElevatedButton(
+                onPressed: _generateRemoteToken,
+                child: const Text('Generate token'),
+              ),
+            ],
+          ),
+          if (_remoteNewTokenSecret != null) ...[
+            const SizedBox(height: 8),
+            SelectableText(
+              _remoteNewTokenSecret!,
+              style: DialogStyles.bodyStyle,
+            ),
+          ],
+          if (_remoteTokenStatus.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(_remoteTokenStatus, style: DialogStyles.bodyStyle),
+          ],
         ],
         if (_remoteRole == RemoteAppRole.client) ...[
           const SizedBox(height: 12),
