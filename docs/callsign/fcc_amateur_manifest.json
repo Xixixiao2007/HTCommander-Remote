@@ -8,12 +8,12 @@
   "md5": "16dafd1fe65701e8cbc6f19429b1ba74",
   "recordCount": 1605551,
   "overlay": {
-    "version": "2026.10.25",
-    "sourceDate": 20261025,
-    "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db/fcc_amateur_overlay-9ceebad8bfa18a3f65cd5b20b7d4a8e7.cdb.xz",
+    "version": "2026.11.01",
+    "sourceDate": 20261101,
+    "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db/fcc_amateur_overlay-b5d6cfe16809640c9876ab01590a06b8.cdb.xz",
     "compressed": true,
-    "sizeBytes": 88,
-    "md5": "9ceebad8bfa18a3f65cd5b20b7d4a8e7",
-    "recordCount": 0
+    "sizeBytes": 417416,
+    "md5": "b5d6cfe16809640c9876ab01590a06b8",
+    "recordCount": 20020
   }
 }
