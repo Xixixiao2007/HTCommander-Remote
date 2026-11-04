@@ -8,12 +8,12 @@
   "md5": "7b83919d6658d8407ae34cd0b6aa33e9",
   "recordCount": 92173,
   "overlay": {
-    "version": "2026.10.28",
-    "sourceDate": 20261028,
-    "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db-ca/ised_amateur_overlay-82d775491df7758031b68cd17a2bd432.cdb.xz",
+    "version": "2026.11.04",
+    "sourceDate": 20261104,
+    "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/callsign-db-ca/ised_amateur_overlay-a17d41aac1e543f097fd9cfcba385b6b.cdb.xz",
     "compressed": true,
-    "sizeBytes": 92,
-    "md5": "82d775491df7758031b68cd17a2bd432",
-    "recordCount": 0
+    "sizeBytes": 1492,
+    "md5": "a17d41aac1e543f097fd9cfcba385b6b",
+    "recordCount": 57
   }
 }
