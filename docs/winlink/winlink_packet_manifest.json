@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "version": "2026.11.02",
-  "sourceDate": 20261102,
+  "version": "2026.11.05",
+  "sourceDate": 20261105,
   "url": "https://github.com/Xixixiao2007/HTCommander-Remote/releases/download/winlink-db/winlink_packet.wdb.xz",
   "compressed": true,
-  "sizeBytes": 12376,
-  "md5": "59d2032865c1be41a873e81ee87c1422",
-  "recordCount": 1274,
-  "gatewayCount": 1213,
-  "recordsMd5": "b8751085a5008834c4bb945d56a6141e"
+  "sizeBytes": 12380,
+  "md5": "af430bb942f9d63d45828712ebaa740c",
+  "recordCount": 1275,
+  "gatewayCount": 1216,
+  "recordsMd5": "09bb9566c7c7e89c53346bf355e86930"
 }
